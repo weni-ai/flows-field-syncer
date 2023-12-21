@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -17,7 +18,7 @@ type Contact struct {
 	LastSeenOn *time.Time     `db:"last_seen_on"`
 }
 
-func UpdateContactField(db *sqlx.DB, contactUUID string, fieldUUID string, fieldValue any) error {
+func UpdateContactField(ctx context.Context, db *sqlx.DB, contactUUID string, fieldUUID string, fieldValue any) error {
 	updateQuery := `
 		UPDATE public.contacts_contact
 		SET fields = COALESCE(
@@ -31,7 +32,8 @@ func UpdateContactField(db *sqlx.DB, contactUUID string, fieldUUID string, field
 		)
 		WHERE uuid = $4;
 	`
-	_, err := db.Exec(
+	_, err := db.ExecContext(
+		ctx,
 		updateQuery,
 		fmt.Sprintf(`{"%s"}`, fieldUUID),
 		fmt.Sprintf(`{"text": "%s"}`, fieldValue),

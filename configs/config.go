@@ -14,6 +14,7 @@ type Config struct {
 	PortAPI     string `env:"PORT_API,default=8080"`
 	SentryDSN   string `env:"SENTRY_DSN"`
 	LogLevel    string `env:"LOG_LEVEL,default=debug"`
+	AuthToken   string `env:"AUTH_TOKEN,default=""`
 }
 
 func NewConfig() *Config {

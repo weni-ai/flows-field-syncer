@@ -21,3 +21,7 @@
 go.work
 .vscode
 
+# custom workspace ignore
+tmp
+.air.toml
+api_requests.http

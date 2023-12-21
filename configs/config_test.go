@@ -12,12 +12,13 @@ func TestNewConfig(t *testing.T) {
 	t.Run("defined configs", func(t *testing.T) {
 
 		var (
-			flowsDB     = "test_flows_db"
-			mongoURI    = "test_mongo_uri"
-			mongoDbName = "test_mongo_db_name"
-			hostAPI     = "test_host_api"
-			portAPI     = "90909"
-			sentryDSB   = "test_sentry_dsn"
+			flowsDB      = "test_flows_db"
+			mongoURI     = "test_mongo_uri"
+			mongoDbName  = "test_mongo_db_name"
+			hostAPI      = "test_host_api"
+			portAPI      = "90909"
+			sentryDSB    = "test_sentry_dsn"
+			authTokenAPI = "test_auth_token_api"
 		)
 		os.Setenv("FLOWS_DB", flowsDB)
 		os.Setenv("MONGO_URI", mongoURI)
@@ -25,6 +26,7 @@ func TestNewConfig(t *testing.T) {
 		os.Setenv("HOST_API", hostAPI)
 		os.Setenv("PORT_API", portAPI)
 		os.Setenv("SENTRY_DSN", sentryDSB)
+		os.Setenv("AUTH_TOKEN", authTokenAPI)
 
 		defer func() {
 			os.Unsetenv("FLOWS_DB")
@@ -33,6 +35,7 @@ func TestNewConfig(t *testing.T) {
 			os.Unsetenv("HOST_API")
 			os.Unsetenv("PORT_API")
 			os.Unsetenv("SENTRY_DSN")
+			os.Unsetenv("AUTH_TOKEN")
 		}()
 
 		config := NewConfig()
@@ -43,6 +46,7 @@ func TestNewConfig(t *testing.T) {
 		assert.Equal(t, hostAPI, config.HostAPI)
 		assert.Equal(t, portAPI, config.PortAPI)
 		assert.Equal(t, sentryDSB, config.SentryDSN)
+		assert.Equal(t, authTokenAPI, config.AuthToken)
 	})
 
 	t.Run("default values", func(t *testing.T) {
@@ -53,6 +57,7 @@ func TestNewConfig(t *testing.T) {
 			hostAPI     = ":"
 			portAPI     = "8080"
 			sentryDSB   = ""
+			authToken   = ""
 		)
 		config := NewConfig()
 
@@ -62,5 +67,6 @@ func TestNewConfig(t *testing.T) {
 		assert.Equal(t, hostAPI, config.HostAPI)
 		assert.Equal(t, portAPI, config.PortAPI)
 		assert.Equal(t, sentryDSB, config.SentryDSN)
+		assert.Equal(t, authToken, config.SentryDSN)
 	})
 }

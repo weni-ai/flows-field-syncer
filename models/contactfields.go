@@ -1,11 +1,22 @@
 package models
 
 import (
+	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+)
+
+const (
+	ValueTypeText     = "T"
+	ValueTypeNumber   = "N"
+	ValueTypeDateTime = "D"
+	ValueTypeState    = "S"
+	ValueTypeDistrict = "I"
+	ValueTypeWard     = "W"
 )
 
 type ContactField struct {
@@ -25,7 +36,7 @@ type ContactField struct {
 	OrgID        int64     `db:"org_id"`
 }
 
-func NewContactField(label, key string, orgID, createdByID, modifiedByID int64) ContactField {
+func NewContactField(label, key, valueType string, orgID, createdByID, modifiedByID int64) ContactField {
 	return ContactField{
 		IsActive:     true,
 		CreatedOn:    time.Now(),
@@ -34,7 +45,7 @@ func NewContactField(label, key string, orgID, createdByID, modifiedByID int64) 
 		Label:        label,
 		Key:          key,
 		FieldType:    "U",
-		ValueType:    "T",
+		ValueType:    valueType,
 		ShowInTable:  false,
 		Priority:     0,
 		CreatedByID:  createdByID,
@@ -43,7 +54,7 @@ func NewContactField(label, key string, orgID, createdByID, modifiedByID int64) 
 	}
 }
 
-func GetContactFieldByOrgAndLabel(db *sqlx.DB, orgID int64, label string) (ContactField, error) {
+func GetContactFieldByOrgAndLabel(ctx context.Context, db *sqlx.DB, orgID int64, label string) (ContactField, error) {
 	var contactField ContactField
 
 	query := `
@@ -69,7 +80,7 @@ func GetContactFieldByOrgAndLabel(db *sqlx.DB, orgID int64, label string) (Conta
 			key = $2
 	`
 
-	err := db.Get(&contactField, query, orgID, label)
+	err := db.GetContext(ctx, &contactField, query, orgID, label)
 	if err != nil {
 		return ContactField{}, fmt.Errorf("error getting contact field: %v", err)
 	}
@@ -77,7 +88,7 @@ func GetContactFieldByOrgAndLabel(db *sqlx.DB, orgID int64, label string) (Conta
 	return contactField, nil
 }
 
-func CreateContactField(db *sqlx.DB, contactField ContactField) error {
+func CreateContactField(ctx context.Context, db *sqlx.DB, contactField ContactField) error {
 	query := `
 		INSERT INTO public.contacts_contactfield (
 			is_active,
@@ -98,7 +109,9 @@ func CreateContactField(db *sqlx.DB, contactField ContactField) error {
 		) RETURNING id
 	`
 
-	err := db.QueryRow(query,
+	err := db.QueryRowContext(
+		ctx,
+		query,
 		contactField.IsActive,
 		contactField.CreatedOn,
 		contactField.ModifiedOn,
@@ -119,4 +132,26 @@ func CreateContactField(db *sqlx.DB, contactField ContactField) error {
 	}
 
 	return nil
+}
+
+func ScanValueType(value interface{}) string {
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return ValueTypeNumber
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return ValueTypeNumber
+	case reflect.Float32, reflect.Float64:
+		return ValueTypeNumber
+	case reflect.String:
+		return ValueTypeText
+	case reflect.Struct:
+		if v.Type() == reflect.TypeOf(time.Time{}) {
+			return ValueTypeDateTime
+		} else {
+			return ValueTypeText
+		}
+	default:
+		return ValueTypeText
+	}
 }

@@ -1,12 +1,13 @@
 package syncer
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/pkg/errors"
 	"github.weni-ai/flows-field-syncer/configs"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type SyncerAPI struct {
@@ -33,7 +34,7 @@ func NewSyncerAPI(config *configs.Config, syncerConfRepo SyncerConfRepository) *
 func (a *SyncerAPI) Start() {
 	go func() {
 		if err := a.Server.Start(a.Config.HostAPI + a.Config.PortAPI); err != nil && err != http.ErrServerClosed {
-			a.Server.Logger.Fatal(errors.Wrap(err, "shutting down the api server"))
+			slog.Error("error on start api server", "err", err)
 		}
 	}()
 }
@@ -43,6 +44,7 @@ func (a *SyncerAPI) createSyncerConfHandler(c echo.Context) error {
 	if err := c.Bind(syncerConf); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
+	syncerConf.ID = primitive.NewObjectID().Hex()
 	err := a.SyncerConfRepo.Create(*syncerConf)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -52,11 +54,19 @@ func (a *SyncerAPI) createSyncerConfHandler(c echo.Context) error {
 
 func (a *SyncerAPI) getSyncerConfHandler(c echo.Context) error {
 	id := c.Param("id")
-	syncerConf, err := a.SyncerConfRepo.GetByID(id)
-	if err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
+	if id != "" {
+		syncerConf, err := a.SyncerConfRepo.GetByID(id)
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, syncerConf)
 	}
-	return c.JSON(http.StatusOK, syncerConf)
+
+	syncerConfs, err := a.SyncerConfRepo.GetAll()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, syncerConfs)
 }
 
 func (a *SyncerAPI) updateSyncerConfHandler(c echo.Context) error {
@@ -86,6 +96,10 @@ func (a *SyncerAPI) deleteSyncerConfHandler(c echo.Context) error {
 var confPath = "/config"
 
 func (a *SyncerAPI) setupSyncerConfRoutes() {
+	a.Server.GET("/", func(c echo.Context) error {
+		return c.NoContent(http.StatusOK)
+	})
+	a.Server.GET(confPath, a.getSyncerConfHandler)
 	a.Server.POST(confPath, a.createSyncerConfHandler)
 	a.Server.GET(confPath+"/:id", a.getSyncerConfHandler)
 	a.Server.PUT(confPath+"/:id", a.updateSyncerConfHandler)

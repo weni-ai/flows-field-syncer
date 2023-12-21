@@ -37,7 +37,7 @@ func (r *syncerConfRepository) GetByID(id string) (SyncerConf, error) {
 }
 
 func (r *syncerConfRepository) GetAll() ([]SyncerConf, error) {
-	var syncerConfs []SyncerConf
+	syncerConfs := []SyncerConf{}
 	c, err := r.collection.Find(context.Background(), bson.M{})
 	if err != nil {
 		return nil, err

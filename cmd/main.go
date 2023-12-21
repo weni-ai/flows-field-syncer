@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"log/slog"
 	"os"
@@ -10,7 +9,6 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
-	"github.com/go-co-op/gocron"
 	slogsentry "github.com/ihippik/slog-sentry"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -32,14 +30,12 @@ func main() {
 	flowsdb, err := initFlowsDB(config)
 	if err != nil {
 		slog.Error("error on initalize flows db", "err", err)
-		sentry.Flush(2 * time.Second)
 		os.Exit(1)
 	}
 
 	syncerdb, err := initMongo(config)
 	if err != nil {
 		slog.Error("error on initialize mongo db", "err", err)
-		sentry.Flush(2 * time.Second)
 		os.Exit(1)
 	}
 
@@ -50,58 +46,29 @@ func main() {
 		config,
 		syncerConfRepo,
 	)
-
 	api.Start()
 	slog.Info("syncer api started")
 
-	s := gocron.NewScheduler(time.UTC)
-	_, err = s.Every(1).
-		Day().
-		At("00:00").
-		Do(func() {
-			retentionPeriod := 5 * 24 * time.Hour // 5 days
-			currentTime := time.Now()
-			retentionLimit := currentTime.Add(-retentionPeriod)
+	sc := syncer.NewSyncerScheduler(
+		syncerLogRepo,
+		syncerConfRepo,
+		flowsdb,
+	)
 
-			deletedCount, err := syncerLogRepo.DeleteOlderThan(retentionLimit)
-			if err != nil {
-				slog.Error("Error on delete older logs:", "err", err)
-			} else {
-				slog.Info(fmt.Sprintf("Deleted %d logs older than %s\n", deletedCount, retentionLimit))
-			}
-		})
+	err = sc.StartLogCleaner()
 	if err != nil {
-		slog.Error("error on start log cleaner task", "err", err)
+		log.Fatal(errors.Wrap(err, "error on start log cleaning"))
 	}
 
-	go func() {
-		for {
-			var loadedSyncers []syncer.Syncer
-			syncerConfs, err := syncerConfRepo.GetAll()
-			if err != nil {
-				slog.Error("error on get all syncers", "err", err)
-			} else {
-				for _, scf := range syncerConfs {
-					sc, err := syncer.NewSyncer(scf)
-					if err != nil {
-						slog.Error("error on get syncer", "err", err)
-					} else {
-						loadedSyncers = append(loadedSyncers, sc)
-					}
-				}
-				for _, sc := range loadedSyncers {
-					start := time.Now()
-					synched, err := sc.SyncContactFields(flowsdb)
-					if err != nil {
-						slog.Error("Failed to sync contact fields", "err", err)
-						continue
-					}
-					slog.Info(fmt.Sprintf("synced %d, elapsed %s", synched, time.Since(start).String()))
-				}
-			}
-			time.Sleep(time.Second * 10)
-		}
-	}()
+	err = sc.LoadSyncers()
+	if err != nil {
+		log.Fatal(errors.Wrap(err, "error on load syncers"))
+	}
+
+	err = sc.StartSyncers()
+	if err != nil {
+		slog.Error("error on start syncers", "err", err)
+	}
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt)
@@ -111,6 +78,8 @@ func main() {
 	if err := api.Server.Shutdown(ctx); err != nil {
 		slog.Error("error on shutdown api", "err", err)
 	}
+	flowsdb.Close()
+	syncerdb.Client().Disconnect(context.Background())
 	slog.Info("flows-field-syncer stopped")
 }
 
@@ -164,7 +133,7 @@ func initFlowsDB(config *configs.Config) (*sqlx.DB, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "error on open flows db")
 	}
-	defer flowsdb.Close()
+
 	if err = flowsdb.Ping(); err != nil {
 		return nil, errors.Wrap(err, "error on ping flows db")
 	}

@@ -84,32 +84,50 @@ func (s *SyncerPG) SyncContactFields(db *sqlx.DB) (int, error) {
 
 	// for each contact
 	for _, r := range results {
-		log.Println(r)
+		slog.Info(fmt.Sprint(r))
 		// update fields
 		for _, v := range s.Conf.Table.Columns {
+			resultValue := r[v.Name]
 			found := true
 			// get contact field from flows
-			field, err := models.GetContactFieldByOrgAndLabel(db, s.Conf.SyncRules.OrgID, v.FieldMapName)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			field, err := models.GetContactFieldByOrgAndLabel(ctx, db, s.Conf.SyncRules.OrgID, v.FieldMapName)
 			if err != nil {
 				slog.Error(fmt.Sprintf("field could not be found in flows. field: %s", v.Name), "err", err)
 				found = false
 			}
 			if found {
 				// if field exists in flows, update that field in contact
-				err := models.UpdateContactField(db, r[s.Conf.Table.RelationColumn].(string), field.UUID, r[v.Name])
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				err := models.UpdateContactField(ctx, db, r[s.Conf.Table.RelationColumn].(string), field.UUID, resultValue)
 				if err != nil {
 					errMsg := fmt.Sprintf("field could not be updated: %v", field)
 					slog.Error(errMsg, "err", err)
 				}
 			} else {
 				// if field not exist, create it and create it in contact field column jsonb
-				cf := models.NewContactField(v.FieldMapName, v.FieldMapName, s.Conf.SyncRules.OrgID, s.Conf.SyncRules.AdminID, s.Conf.SyncRules.AdminID)
-				err := models.CreateContactField(db, cf)
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				cf := models.NewContactField(
+					v.FieldMapName,
+					v.FieldMapName,
+					models.ScanValueType(resultValue),
+					s.Conf.SyncRules.OrgID,
+					s.Conf.SyncRules.AdminID,
+					s.Conf.SyncRules.AdminID)
+
+				err := models.CreateContactField(ctx, db, cf)
 				if err != nil {
-					errMsg := fmt.Sprintf("error creating contact field: %v", err)
+					errMsg := fmt.Sprintf("error creating contact field: %v", v.FieldMapName)
 					slog.Error(errMsg, "err", err)
 				} else {
-					models.UpdateContactField(db, r[s.Conf.Table.RelationColumn].(string), cf.UUID, r[v.Name])
+					err := models.UpdateContactField(ctx, db, r[s.Conf.Table.RelationColumn].(string), cf.UUID, resultValue)
+					if err != nil {
+						errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
+						slog.Error(errMsg, "err", err)
+					}
 				}
 			}
 		}
@@ -121,3 +139,5 @@ func (s *SyncerPG) SyncContactFields(db *sqlx.DB) (int, error) {
 func (s *SyncerPG) Close() error {
 	return s.DB.Close()
 }
+
+func (s *SyncerPG) GetConfig() SyncerConf { return s.Conf }
