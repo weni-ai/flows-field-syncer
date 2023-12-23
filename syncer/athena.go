@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/athena"
+	"github.com/aws/aws-sdk-go/service/athena/athenaiface"
 	"github.com/jmoiron/sqlx"
 	"github.com/pkg/errors"
 	"github.weni-ai/flows-field-syncer/models"
@@ -20,7 +21,7 @@ type SyncerAthena struct {
 	Conf                 SyncerConf
 	Database             string
 	ResultOutputLocation string
-	Client               *athena.Athena
+	Client               athenaiface.AthenaAPI
 }
 
 const (
@@ -111,7 +112,7 @@ func (s *SyncerAthena) MakeQuery(ctx context.Context, query string) ([]map[strin
 		return nil, errors.Wrap(err, "failed to get query results")
 	}
 
-	var resultRows []map[string]interface{}
+	resultRows := []map[string]interface{}{}
 
 	for i, row := range getQueryResultsOutput.ResultSet.Rows {
 		if i == 0 {

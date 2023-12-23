@@ -17,8 +17,18 @@ import (
 )
 
 type SyncerBigQuery struct {
-	Conf   SyncerConf
-	Client *bigquery.Client
+	Conf           SyncerConf
+	Client         BigQueryIface
+	customIterator IteratorIface
+}
+
+type BigQueryIface interface {
+	Query(string) *bigquery.Query
+	Close() error
+}
+
+type IteratorIface interface {
+	Next(dst interface{}) error
 }
 
 func NewSyncerBigQuery(conf SyncerConf) (*SyncerBigQuery, error) {
@@ -63,10 +73,17 @@ func (s *SyncerBigQuery) GenerateSelectToSyncQuery() (string, error) {
 	return query, nil
 }
 
+func (s *SyncerBigQuery) ReadQuery(ctx context.Context, query *bigquery.Query) (IteratorIface, error) {
+	if s.customIterator != nil {
+		return s.customIterator, nil
+	}
+	return query.Read(ctx)
+}
+
 func (s *SyncerBigQuery) MakeQuery(ctx context.Context, query string) ([]map[string]any, error) {
 	log.Println(query)
 	cquery := s.Client.Query(query)
-	rows, err := cquery.Read(ctx)
+	rows, err := s.ReadQuery(ctx, cquery)
 	if err != nil {
 		return nil, err
 	}

@@ -1,35 +1,33 @@
-[
-  {
-    "service": {
-      "name": "pull athena",
-      "type": "athena",
-      "access": {
-        "aws_access_key_id": "AKIA444O3A5D4Z6IVFXQ",
-        "aws_secret_access_key": "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",
-        "aws_region": "sa-east-1",
-        "database": "mydatabase",
-        "output_location": "s3://ath-dt-tst/query_results/"
-      }
-    },
-    "sync_rules": {
-      "interval": 5,
-      "org_id": 1,
-      "admin_id": 1
-    },
-    "table": {
-        "name": "smuser_users",
-        "table_destination": "contacts_contact",
-        "relation_column": "external_id",
-        "columns": [
-          {
-            "name": "region",
-            "field_map_name": "ctt_region"
-          },
-          {
-            "name": "state",
-            "field_map_name": "ctt_state"
-          }
-        ]
-      }
-  }
-]
+{
+  "service": {
+    "name": "pull athena",
+    "type": "athena",
+    "access": {
+      "aws_access_key_id": "MOCK_KEY_ID",
+      "aws_secret_access_key": "MOCK_SECRET",
+      "aws_region": "sa-east-1",
+      "database": "mydatabase",
+      "output_location": "s3://ath-dt-tst/query_results/"
+    }
+  },
+  "sync_rules": {
+    "interval": 5,
+    "org_id": 1,
+    "admin_id": 1
+  },
+  "table": {
+      "name": "smuser_users",
+      "table_destination": "contacts_contact",
+      "relation_column": "external_id",
+      "columns": [
+        {
+          "name": "region",
+          "field_map_name": "ctt_region"
+        },
+        {
+          "name": "state",
+          "field_map_name": "ctt_state"
+        }
+      ]
+    }
+}
