@@ -42,18 +42,19 @@ func main() {
 	syncerConfRepo := syncer.NewSyncerConfRepository(syncerdb)
 	syncerLogRepo := syncer.NewSyncerLogRepository(syncerdb)
 
-	api := syncer.NewSyncerAPI(
-		config,
-		syncerConfRepo,
-	)
-	api.Start()
-	slog.Info("syncer api started")
-
 	sc := syncer.NewSyncerScheduler(
 		syncerLogRepo,
 		syncerConfRepo,
 		flowsdb,
 	)
+
+	api := syncer.NewSyncerAPI(
+		config,
+		syncerConfRepo,
+		sc,
+	)
+	api.Start()
+	slog.Info("syncer api started")
 
 	err = sc.StartLogCleaner()
 	if err != nil {
@@ -112,7 +113,8 @@ func initLogger(config *configs.Config) {
 
 func initMongo(config *configs.Config) (*mongo.Database, error) {
 	mongoClientOptions := options.Client().ApplyURI(config.MongoURI)
-	ctx, ctxCancel := context.WithTimeout(context.Background(), 7*time.Second)
+	timeoutDuration := time.Duration(config.MongoConnectionTimeout)
+	ctx, ctxCancel := context.WithTimeout(context.Background(), timeoutDuration*time.Second)
 	defer ctxCancel()
 
 	mongoClient, err := mongo.Connect(ctx, mongoClientOptions)

@@ -11,20 +11,22 @@ import (
 )
 
 type SyncerAPI struct {
-	SyncerConfRepo SyncerConfRepository
-	Server         *echo.Echo
-	Config         *configs.Config
+	SyncerConfRepo  SyncerConfRepository
+	Server          *echo.Echo
+	Config          *configs.Config
+	SyncerScheduler *SyncerScheduler
 }
 
-func NewSyncerAPI(config *configs.Config, syncerConfRepo SyncerConfRepository) *SyncerAPI {
+func NewSyncerAPI(config *configs.Config, syncerConfRepo SyncerConfRepository, syncerScheduler *SyncerScheduler) *SyncerAPI {
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
 	api := &SyncerAPI{
-		SyncerConfRepo: syncerConfRepo,
-		Server:         e,
-		Config:         config,
+		SyncerConfRepo:  syncerConfRepo,
+		Server:          e,
+		Config:          config,
+		SyncerScheduler: syncerScheduler,
 	}
 	api.setupSyncerConfRoutes()
 
@@ -62,6 +64,15 @@ func (a *SyncerAPI) getSyncerConfHandler(c echo.Context) error {
 		return c.JSON(http.StatusOK, syncerConf)
 	}
 
+	orgID := c.QueryParam("org_id")
+	if orgID == "" {
+		syncerConfs, err := a.SyncerConfRepo.GetByOrgID(orgID)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, syncerConfs)
+	}
+
 	syncerConfs, err := a.SyncerConfRepo.GetAll()
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -79,6 +90,12 @@ func (a *SyncerAPI) updateSyncerConfHandler(c echo.Context) error {
 	err := a.SyncerConfRepo.Update(id, *syncerConf)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	if !syncerConf.IsActive {
+		err := a.SyncerScheduler.UnregisterSyncer(*syncerConf)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
 	}
 
 	return c.NoContent(http.StatusNoContent)
