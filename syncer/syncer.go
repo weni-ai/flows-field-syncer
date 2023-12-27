@@ -83,7 +83,8 @@ func (s *SyncerScheduler) LoadSyncers() error {
 
 func (s *SyncerScheduler) StartSyncers() error {
 	for _, sc := range s.Syncers {
-		job, err := s.JobScheduler.Every(sc.GetConfig().SyncRules.Interval).Minute().Do(
+		startTime := sc.GetConfig().SyncRules.ScheduleTime
+		job, err := s.JobScheduler.At(startTime).Every(sc.GetConfig().SyncRules.Interval).Minute().Do(
 			func() {
 				start := time.Now()
 				slog.Info(fmt.Sprintf("start sync contact fields task at %s", start))
@@ -112,8 +113,12 @@ func (s *SyncerScheduler) RegisterSyncer(scf SyncerConf) error {
 	if err != nil {
 		return err
 	}
-	newJob, err := s.JobScheduler.Every(newSyncer.GetConfig().SyncRules.Interval).Minute().Do(
-		func() {
+
+	newJob, err := s.JobScheduler.
+		At(newSyncer.GetConfig().SyncRules.ScheduleTime).
+		Every(newSyncer.GetConfig().SyncRules.Interval).
+		Minute().
+		Do(func() {
 			start := time.Now()
 			slog.Info(fmt.Sprintf("start sync contact fields task at %s", start))
 			synched, err := newSyncer.SyncContactFields(s.flowsDB)
@@ -131,6 +136,15 @@ func (s *SyncerScheduler) RegisterSyncer(scf SyncerConf) error {
 	} else {
 		s.SyncerJobs[newSyncer.GetConfig().ID] = newJob
 	}
+	return nil
+}
+
+func (s *SyncerScheduler) UnregisterSyncer(scf SyncerConf) error {
+	err := s.JobScheduler.RemoveByID(s.SyncerJobs[scf.ID])
+	if err != nil {
+		return err
+	}
+	s.SyncerJobs[scf.ID] = nil
 	return nil
 }
 
@@ -159,9 +173,10 @@ type SyncerConf struct {
 	ID        string        `bson:"_id" json:"id,omitempty"`
 	Service   SyncerService `bson:"service" json:"service"`
 	SyncRules struct {
-		Interval int   `bson:"interval" json:"interval"`
-		OrgID    int64 `bson:"org_id" json:"org_id"`
-		AdminID  int64 `bson:"admin_id" json:"admin_id"`
+		ScheduleTime string `bson:"schedule_time" json:"schedule_time"`
+		Interval     int    `bson:"interval" json:"interval"`
+		OrgID        int64  `bson:"org_id" json:"org_id"`
+		AdminID      int64  `bson:"admin_id" json:"admin_id"`
 	} `bson:"sync_rules" json:"sync_rules"`
 	Table    SyncerTable `bson:"table" json:"table"`
 	IsActive bool        `bson:"is_active" json:"is_active"`

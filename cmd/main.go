@@ -42,18 +42,19 @@ func main() {
 	syncerConfRepo := syncer.NewSyncerConfRepository(syncerdb)
 	syncerLogRepo := syncer.NewSyncerLogRepository(syncerdb)
 
-	api := syncer.NewSyncerAPI(
-		config,
-		syncerConfRepo,
-	)
-	api.Start()
-	slog.Info("syncer api started")
-
 	sc := syncer.NewSyncerScheduler(
 		syncerLogRepo,
 		syncerConfRepo,
 		flowsdb,
 	)
+
+	api := syncer.NewSyncerAPI(
+		config,
+		syncerConfRepo,
+		sc,
+	)
+	api.Start()
+	slog.Info("syncer api started")
 
 	err = sc.StartLogCleaner()
 	if err != nil {

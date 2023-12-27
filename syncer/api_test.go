@@ -109,6 +109,11 @@ func (m *MockSyncerConfRepository) GetByID(id string) (SyncerConf, error) {
 	return args.Get(0).(SyncerConf), args.Error(1)
 }
 
+func (m *MockSyncerConfRepository) GetByOrgID(orgID string) ([]SyncerConf, error) {
+	args := m.Called(orgID)
+	return args.Get(0).([]SyncerConf), args.Error(1)
+}
+
 func (m *MockSyncerConfRepository) Update(id string, syncerConf SyncerConf) error {
 	args := m.Called(id, syncerConf)
 	return args.Error(0)

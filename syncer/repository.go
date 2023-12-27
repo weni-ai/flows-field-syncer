@@ -11,6 +11,7 @@ import (
 type SyncerConfRepository interface {
 	Create(syncerConf SyncerConf) error
 	GetByID(id string) (SyncerConf, error)
+	GetByOrgID(orgID string) ([]SyncerConf, error)
 	GetAll() ([]SyncerConf, error)
 	Update(id string, syncerConf SyncerConf) error
 	Delete(id string) error
@@ -34,6 +35,28 @@ func (r *syncerConfRepository) GetByID(id string) (SyncerConf, error) {
 	var syncerConf SyncerConf
 	err := r.collection.FindOne(context.Background(), bson.M{"_id": id}).Decode(&syncerConf)
 	return syncerConf, err
+}
+
+func (r *syncerConfRepository) GetByOrgID(orgID string) ([]SyncerConf, error) {
+	syncerConfs := []SyncerConf{}
+	c, err := r.collection.Find(context.Background(), bson.M{"ord_id": orgID})
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close(context.Background())
+	for c.Next(context.Background()) {
+		var syncerConf SyncerConf
+		if err != c.Decode(&syncerConf) {
+			return nil, err
+		}
+		syncerConfs = append(syncerConfs, syncerConf)
+	}
+
+	if err := c.Err(); err != nil {
+		return nil, err
+	}
+
+	return syncerConfs, err
 }
 
 func (r *syncerConfRepository) GetAll() ([]SyncerConf, error) {
