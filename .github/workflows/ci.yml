@@ -1,0 +1,44 @@
+name: ci
+on: [push, pull_request]
+env:
+  go-version: '1.21.x'
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v1
+
+    - name: Start MongoDB
+      uses: supercharge/mongodb-github-action@1.7.0
+      with:
+        mongodb-version: 5.0.8
+        mongodb-db: flows-field-syncer
+
+    - name: Install PostgreSQL
+      uses: nyaruka/postgis-action@v2.1.0
+      with:
+        postgresql version: 13
+        postgis version: 13
+        postgresql password: temba
+    
+    - name: Install Linux packages
+      run: sudo apt install -y --no-install-recommends postgresql-client
+
+    - name: Initialize database
+      run: |
+        export PGPASSWORD=temba
+        psql -h localhost -U postgres --no-password -c "CREATE USER temba PASSWORD 'temba';"
+        psql -h localhost -U postgres --no-password -c "ALTER ROLE temba WITH SUPERUSER;"
+        psql -h localhost -U postgres --no-password -c "CREATE DATABASE temba;"
+        pg_restore -U postgres -d temba < ffs_test.dump
+
+    - name: Install Go
+      uses: actions/setup-go@v1
+      with:
+        go-version: ${{ env.go-version }}
+
+    - name: Run tests
+      run: go test -p=1 -coverprofile=coverage.text -covermode=atomic ./...
+
