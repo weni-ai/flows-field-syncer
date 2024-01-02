@@ -137,10 +137,16 @@ func (s *SyncerBigQuery) SyncContactFields(db *sqlx.DB) (int, error) {
 				// if field exists in flows, update that field in contact
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				err := models.UpdateContactField(ctx, db, r[s.Conf.Table.RelationColumn].(string), field.UUID, resultValue)
-				if err != nil {
-					errMsg := fmt.Sprintf("field could not be updated: %v", field)
+				relationColumn, ok := r[s.Conf.Table.RelationColumn]
+				if !ok {
+					errMsg := fmt.Sprintf("row is not containing the configure relation_column configured as: %s", s.Conf.Table.RelationColumn)
 					slog.Error(errMsg, "err", err)
+				} else {
+					err := models.UpdateContactField(ctx, db, relationColumn.(string), field.UUID, resultValue)
+					if err != nil {
+						errMsg := fmt.Sprintf("field could not be updated: %v", field)
+						slog.Error(errMsg, "err", err)
+					}
 				}
 			} else {
 				// if field not exist, create it and create it in contact field column jsonb

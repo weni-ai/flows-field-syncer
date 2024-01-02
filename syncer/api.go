@@ -14,10 +14,10 @@ type SyncerAPI struct {
 	SyncerConfRepo  SyncerConfRepository
 	Server          *echo.Echo
 	Config          *configs.Config
-	SyncerScheduler *SyncerScheduler
+	SyncerScheduler SyncerScheduler
 }
 
-func NewSyncerAPI(config *configs.Config, syncerConfRepo SyncerConfRepository, syncerScheduler *SyncerScheduler) *SyncerAPI {
+func NewSyncerAPI(config *configs.Config, syncerConfRepo SyncerConfRepository, syncerScheduler SyncerScheduler) *SyncerAPI {
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())

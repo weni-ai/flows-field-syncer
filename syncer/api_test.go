@@ -20,7 +20,8 @@ func TestSyncerAPI(t *testing.T) {
 	syncerConfJSON, err := os.ReadFile(confsFile)
 	assert.NoError(t, err)
 	mockRepo := new(MockSyncerConfRepository)
-	api := NewSyncerAPI(config, mockRepo)
+	mockSyncerScheduler := new(MockSyncerScheduler)
+	api := NewSyncerAPI(config, mockRepo, mockSyncerScheduler)
 
 	t.Run("Create", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, confPath, bytes.NewReader(syncerConfJSON))
@@ -122,4 +123,24 @@ func (m *MockSyncerConfRepository) Update(id string, syncerConf SyncerConf) erro
 func (m *MockSyncerConfRepository) Delete(id string) error {
 	args := m.Called(id)
 	return args.Error(0)
+}
+
+type MockSyncerScheduler struct {
+	mock.Mock
+}
+
+func (ms *MockSyncerScheduler) StartLogCleaner() error {
+	return nil
+}
+func (ms *MockSyncerScheduler) LoadSyncers() error {
+	return nil
+}
+func (ms *MockSyncerScheduler) StartSyncers() error {
+	return nil
+}
+func (ms *MockSyncerScheduler) RegisterSyncer(sc SyncerConf) error {
+	return nil
+}
+func (ms *MockSyncerScheduler) UnregisterSyncer(sc SyncerConf) error {
+	return nil
 }

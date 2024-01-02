@@ -18,7 +18,15 @@ const (
 	TypeAthena   = "athena"
 )
 
-type SyncerScheduler struct {
+type SyncerScheduler interface {
+	StartLogCleaner() error
+	LoadSyncers() error
+	StartSyncers() error
+	RegisterSyncer(SyncerConf) error
+	UnregisterSyncer(SyncerConf) error
+}
+
+type syncerScheduler struct {
 	logRepo  SyncerLogRepository
 	confRepo SyncerConfRepository
 	flowsDB  *sqlx.DB
@@ -28,8 +36,8 @@ type SyncerScheduler struct {
 	SyncerJobs   map[string]*gocron.Job
 }
 
-func NewSyncerScheduler(logRepo SyncerLogRepository, confRepo SyncerConfRepository, flowsDB *sqlx.DB) *SyncerScheduler {
-	return &SyncerScheduler{
+func NewSyncerScheduler(logRepo SyncerLogRepository, confRepo SyncerConfRepository, flowsDB *sqlx.DB) SyncerScheduler {
+	return &syncerScheduler{
 		Syncers:      make(map[string]Syncer),
 		SyncerJobs:   make(map[string]*gocron.Job),
 		JobScheduler: gocron.NewScheduler(time.UTC),
@@ -39,7 +47,7 @@ func NewSyncerScheduler(logRepo SyncerLogRepository, confRepo SyncerConfReposito
 	}
 }
 
-func (s *SyncerScheduler) StartLogCleaner() error {
+func (s *syncerScheduler) StartLogCleaner() error {
 	_, err := s.JobScheduler.Every(1).
 		Day().
 		At("00:00").
@@ -63,7 +71,7 @@ func (s *SyncerScheduler) StartLogCleaner() error {
 	return nil
 }
 
-func (s *SyncerScheduler) LoadSyncers() error {
+func (s *syncerScheduler) LoadSyncers() error {
 	loadedSyncers := make(map[string]Syncer)
 	confs, err := s.confRepo.GetAll()
 	if err != nil {
@@ -81,7 +89,7 @@ func (s *SyncerScheduler) LoadSyncers() error {
 	return nil
 }
 
-func (s *SyncerScheduler) StartSyncers() error {
+func (s *syncerScheduler) StartSyncers() error {
 	for _, sc := range s.Syncers {
 		startTime := sc.GetConfig().SyncRules.ScheduleTime
 		job, err := s.JobScheduler.At(startTime).Every(sc.GetConfig().SyncRules.Interval).Minute().Do(
@@ -108,7 +116,7 @@ func (s *SyncerScheduler) StartSyncers() error {
 	return nil
 }
 
-func (s *SyncerScheduler) RegisterSyncer(scf SyncerConf) error {
+func (s *syncerScheduler) RegisterSyncer(scf SyncerConf) error {
 	newSyncer, err := NewSyncer(scf)
 	if err != nil {
 		return err
@@ -139,7 +147,7 @@ func (s *SyncerScheduler) RegisterSyncer(scf SyncerConf) error {
 	return nil
 }
 
-func (s *SyncerScheduler) UnregisterSyncer(scf SyncerConf) error {
+func (s *syncerScheduler) UnregisterSyncer(scf SyncerConf) error {
 	err := s.JobScheduler.RemoveByID(s.SyncerJobs[scf.ID])
 	if err != nil {
 		return err

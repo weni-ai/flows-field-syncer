@@ -8,14 +8,15 @@
     }
   },
   "sync_rules": {
-    "interval": 5,
+    "time": "00:00",
+    "interval": 60,
     "org_id": 1,
     "admin_id": 1
   },
   "table": {
       "name": "bigquerytests-404715.contact_fields_dataset.sm_user_users",
       "table_destination": "contacts_contact",
-      "relation_column": "external_id",
+      "relation_column": "uuid_contato_flows",
       "columns": [
         {
           "name": "region",

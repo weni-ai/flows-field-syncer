@@ -11,6 +11,7 @@
     }
   },
   "sync_rules": {
+    "time": "",
     "interval": 5,
     "org_id": 1,
     "admin_id": 1
