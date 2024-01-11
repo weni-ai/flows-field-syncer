@@ -1,20 +1,33 @@
-FROM golang:1.21-alpine AS build
+FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
-COPY go.mod go.sum ./
-RUN go mod download
+COPY go.sum go.mod ./
+RUN --mount=type=cache,target=/go/pkg/mod/ \
+    go mod download -x
 
 COPY . .
 
-RUN go build -o flows-field-syncer ./cmd/main.go
+RUN --mount=type=cache,target=/go/pkg/mod/ \
+    --mount=type=bind,target=. \
+    go install -v ./cmd/main.go
 
-FROM alpine:latest
+FROM alpine:3.18.4
+
+ENV APP_USER=app \
+    APP_GROUP=app \
+    USER_ID=1999 \
+    GROUP_ID=1999
+
+RUN addgroup --system --gid ${GROUP_ID} ${APP_GROUP} \
+    && adduser --system --disabled-password --home /home/${APP_USER} \
+    --uid ${USER_ID} --ingroup ${APP_GROUP} ${APP_USER}
+
+COPY --from=builder --chown=${APP_USER}:${APP_GROUP} /go/bin /app
 
 WORKDIR /app
 
-COPY --from=build /app/flows-field-syncer .
+USER ${APP_USER}:${APP_GROUP}
 
-EXPOSE 8000
-
-CMD ["./flows-field-syncer"]
+EXPOSE 8080
+CMD ["./main"]
