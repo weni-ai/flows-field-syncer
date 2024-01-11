@@ -179,4 +179,4 @@ jobs:
           repository: "${{ env.MANIFESTS_REPOSITORY }}"
           directory: ./kubernetes-manifests/
           branch: main
-          message: "From Nexus-ai Build (Push Tag ${{ env.MANIFESTS_ENVIRONMENT }})"
+          message: "From Flows Field Syncer Build (Push Tag ${{ env.MANIFESTS_ENVIRONMENT }})"
