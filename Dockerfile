@@ -23,11 +23,11 @@ RUN addgroup --system --gid ${GROUP_ID} ${APP_GROUP} \
     && adduser --system --disabled-password --home /home/${APP_USER} \
     --uid ${USER_ID} --ingroup ${APP_GROUP} ${APP_USER}
 
-COPY --from=builder --chown=${APP_USER}:${APP_GROUP} /go/bin/ /app/
+COPY --from=builder --chown=${APP_USER}:${APP_GROUP} /go/bin /app
 
 WORKDIR /app
 
 USER ${APP_USER}:${APP_GROUP}
 
-EXPOSE 8080
-CMD ["./flows-field-syncer"]
+EXPOSE 8000
+CMD ["./main"]
