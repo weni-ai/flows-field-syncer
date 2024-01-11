@@ -29,5 +29,5 @@ WORKDIR /app
 
 USER ${APP_USER}:${APP_GROUP}
 
-EXPOSE 8000
+EXPOSE 8080
 CMD ["./flows-field-syncer"]
