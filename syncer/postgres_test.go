@@ -9,7 +9,7 @@ import (
 )
 
 func TestSyncerPostgres(t *testing.T) {
-	conf, err := GetConf("./testdata/postgre.json")
+	conf, err := GetConf("./testdata/postgres_relation_contact.json")
 	if err != nil {
 		t.Fatal(err)
 	}

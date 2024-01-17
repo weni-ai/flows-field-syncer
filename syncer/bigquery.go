@@ -142,10 +142,19 @@ func (s *SyncerBigQuery) SyncContactFields(db *sqlx.DB) (int, error) {
 					errMsg := fmt.Sprintf("row is not containing the configure relation_column configured as: %s", s.Conf.Table.RelationColumn)
 					slog.Error(errMsg, "err", err)
 				} else {
-					err := models.UpdateContactField(ctx, db, relationColumn.(string), field.UUID, resultValue)
-					if err != nil {
-						errMsg := fmt.Sprintf("field could not be updated: %v", field)
-						slog.Error(errMsg, "err", err)
+					switch s.Conf.Table.RelationType {
+					case RelationTypeContact:
+						err := models.UpdateContactField(ctx, db, relationColumn.(string), field.UUID, resultValue)
+						if err != nil {
+							errMsg := fmt.Sprintf("field could not be updated: %v", field)
+							slog.Error(errMsg, "err", err)
+						}
+					case RelationTypeURN:
+						err := models.UpdateContactFieldByURN(ctx, db, relationColumn.(string), s.Conf.SyncRules.OrgID, field.UUID, resultValue)
+						if err != nil {
+							errMsg := fmt.Sprintf("field could not be updated: %v", field)
+							slog.Error(errMsg, "err", err)
+						}
 					}
 				}
 			} else {
@@ -165,11 +174,21 @@ func (s *SyncerBigQuery) SyncContactFields(db *sqlx.DB) (int, error) {
 					errMsg := fmt.Sprintf("error creating contact field: %v", v.FieldMapName)
 					slog.Error(errMsg, "err", err)
 				} else {
-					err := models.UpdateContactField(ctx, db, r[s.Conf.Table.RelationColumn].(string), cf.UUID, resultValue)
-					if err != nil {
-						errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
-						slog.Error(errMsg, "err", err)
+					switch s.Conf.Table.RelationType {
+					case RelationTypeContact:
+						err := models.UpdateContactField(ctx, db, r[s.Conf.Table.RelationColumn].(string), cf.UUID, resultValue)
+						if err != nil {
+							errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
+							slog.Error(errMsg, "err", err)
+						}
+					case RelationTypeURN:
+						err := models.UpdateContactFieldByURN(ctx, db, r[s.Conf.Table.RelationColumn].(string), s.Conf.SyncRules.OrgID, cf.UUID, resultValue)
+						if err != nil {
+							errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
+							slog.Error(errMsg, "err", err)
+						}
 					}
+
 				}
 			}
 		}

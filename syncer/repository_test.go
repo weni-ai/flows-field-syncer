@@ -77,20 +77,20 @@ func TestSyncerLogRepository(t *testing.T) {
 	repo := NewSyncerLogRepository(db)
 
 	t.Run("Create", func(t *testing.T) {
-		syncerLog := SyncerLog{ID: "1", OrgID: 123, ConfID: "conf1", Details: "Test"}
+		syncerLog := SyncerLog{ID: "1", OrgID: 123, ConfID: "conf1", Details: "Test", LogType: "info"}
 		err := repo.Create(syncerLog)
 		assert.NoError(t, err)
 	})
 
 	t.Run("GetByID", func(t *testing.T) {
-		expected := &SyncerLog{ID: "1", OrgID: 123, ConfID: "conf1", Details: "Test"}
+		expected := &SyncerLog{ID: "1", OrgID: 123, ConfID: "conf1", Details: "Test", LogType: "info"}
 		result, err := repo.GetByID("1")
 		assert.NoError(t, err)
 		assert.Equal(t, expected.Details, result.Details)
 	})
 
 	t.Run("Update", func(t *testing.T) {
-		newSyncerLog := &SyncerLog{ID: "1", OrgID: 123, ConfID: "conf1", Details: "Updated"}
+		newSyncerLog := &SyncerLog{ID: "1", OrgID: 123, ConfID: "conf1", Details: "Updated", LogType: "info"}
 		err := repo.Update("1", *newSyncerLog)
 		assert.NoError(t, err)
 
@@ -113,8 +113,8 @@ func TestSyncerLogRepository(t *testing.T) {
 		oldTime := currentTime.Add(-time.Hour * 24)
 
 		oldLogs := []SyncerLog{
-			{ID: "1", OrgID: 123, ConfID: "conf1", Details: "Old log 1", CretedAt: oldTime, UpdatedAt: oldTime},
-			{ID: "2", OrgID: 123, ConfID: "conf1", Details: "Old log 2", CretedAt: oldTime, UpdatedAt: oldTime},
+			{ID: "1", OrgID: 123, ConfID: "conf1", Details: "Old log 1", CretedAt: oldTime, UpdatedAt: oldTime, LogType: "info"},
+			{ID: "2", OrgID: 123, ConfID: "conf1", Details: "Old log 2", CretedAt: oldTime, UpdatedAt: oldTime, LogType: "error"},
 		}
 
 		for _, log := range oldLogs {
@@ -122,7 +122,7 @@ func TestSyncerLogRepository(t *testing.T) {
 			assert.NoError(t, err)
 		}
 
-		recentLog := SyncerLog{ID: "3", OrgID: 123, ConfID: "conf1", Details: "Recent log", CretedAt: currentTime, UpdatedAt: currentTime}
+		recentLog := SyncerLog{ID: "3", OrgID: 123, ConfID: "conf1", Details: "Recent log", CretedAt: currentTime, UpdatedAt: currentTime, LogType: "info"}
 		err = repo.Create(recentLog)
 		assert.NoError(t, err)
 

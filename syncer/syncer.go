@@ -18,6 +18,16 @@ const (
 	TypeAthena   = "athena"
 )
 
+const (
+	RelationTypeURN     = "urn"
+	RelationTypeContact = "contact"
+)
+
+const (
+	LogTypeInfo  = "info"
+	LogTypeError = "error"
+)
+
 type SyncerScheduler interface {
 	StartLogCleaner() error
 	LoadSyncers() error
@@ -95,10 +105,32 @@ func (s *syncerScheduler) StartSyncers() error {
 		job, err := s.JobScheduler.At(startTime).Every(sc.GetConfig().SyncRules.Interval).Minute().Do(
 			func() {
 				start := time.Now()
-				slog.Info(fmt.Sprintf("start sync contact fields task at %s", start))
+				logMsg := fmt.Sprintf("start sync contact fields task at %s for syncer: %s, of type %s", start, sc.GetConfig().Service.Name, sc.GetConfig().Service.Type)
+				slog.Info(logMsg)
+				newLog := NewSyncerLog(
+					sc.GetConfig().SyncRules.OrgID,
+					sc.GetConfig().ID,
+					logMsg,
+					LogTypeInfo,
+				)
+				err := s.logRepo.Create(*newLog)
+				if err != nil {
+					slog.Error("Failed to create start info log: ", "err", err)
+				}
+
 				synched, err := sc.SyncContactFields(s.flowsDB)
 				if err != nil {
 					slog.Error("Failed to sync contact fields", "err", err)
+					newLog := NewSyncerLog(
+						sc.GetConfig().SyncRules.OrgID,
+						sc.GetConfig().ID,
+						err,
+						LogTypeError,
+					)
+					err := s.logRepo.Create(*newLog)
+					if err != nil {
+						slog.Error("Failed to create error log: ", "err", err)
+					}
 				}
 				slog.Info(fmt.Sprintf("synced %d, elapsed %s", synched, time.Since(start).String()))
 			})
@@ -214,8 +246,20 @@ type SyncerLog struct {
 	OrgID     int64       `bson:"org_id" json:"org_id"`
 	ConfID    string      `bson:"conf_id" json:"conf_id"`
 	Details   interface{} `bson:"details" json:"details"`
+	LogType   string      `bson:"type" json:"log_type"`
 	CretedAt  time.Time   `bson:"creted_at" json:"creted_at"`
 	UpdatedAt time.Time   `bson:"updated_at" json:"updated_at"`
+}
+
+func NewSyncerLog(orgID int64, confID string, details interface{}, logType string) *SyncerLog {
+	return &SyncerLog{
+		OrgID:     orgID,
+		ConfID:    confID,
+		Details:   details,
+		LogType:   logType,
+		CretedAt:  time.Now(),
+		UpdatedAt: time.Now(),
+	}
 }
 
 func (c *SyncerConf) Validate() error {

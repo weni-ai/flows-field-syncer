@@ -161,11 +161,21 @@ func (s *SyncerAthena) SyncContactFields(db *sqlx.DB) (int, error) {
 				// if field exists in flows, update that field in contact
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				err := models.UpdateContactField(ctx, db, r[s.Conf.Table.RelationColumn].(string), field.UUID, resultValue)
-				if err != nil {
-					errMsg := fmt.Sprintf("field could not be updated: %v", field)
-					slog.Error(errMsg, "err", err)
+				switch s.Conf.Table.RelationType {
+				case RelationTypeContact:
+					err := models.UpdateContactField(ctx, db, r[s.Conf.Table.RelationColumn].(string), field.UUID, resultValue)
+					if err != nil {
+						errMsg := fmt.Sprintf("field could not be updated: %v", field)
+						slog.Error(errMsg, "err", err)
+					}
+				case RelationTypeURN:
+					err := models.UpdateContactFieldByURN(ctx, db, r[s.Conf.Table.RelationColumn].(string), s.Conf.SyncRules.OrgID, field.UUID, resultValue)
+					if err != nil {
+						errMsg := fmt.Sprintf("field could not be updated: %v", field)
+						slog.Error(errMsg, "err", err)
+					}
 				}
+
 			} else {
 				// if field not exist, create it and create it in contact field column jsonb
 				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -183,10 +193,19 @@ func (s *SyncerAthena) SyncContactFields(db *sqlx.DB) (int, error) {
 					errMsg := fmt.Sprintf("error creating contact field: %v", v.FieldMapName)
 					slog.Error(errMsg, "err", err)
 				} else {
-					err := models.UpdateContactField(ctx, db, r[s.Conf.Table.RelationColumn].(string), cf.UUID, resultValue)
-					if err != nil {
-						errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
-						slog.Error(errMsg, "err", err)
+					switch s.Conf.Table.RelationType {
+					case RelationTypeContact:
+						err := models.UpdateContactField(ctx, db, r[s.Conf.Table.RelationColumn].(string), cf.UUID, resultValue)
+						if err != nil {
+							errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
+							slog.Error(errMsg, "err", err)
+						}
+					case RelationTypeURN:
+						err := models.UpdateContactFieldByURN(ctx, db, r[s.Conf.Table.RelationColumn].(string), s.Conf.SyncRules.OrgID, cf.UUID, resultValue)
+						if err != nil {
+							errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
+							slog.Error(errMsg, "err", err)
+						}
 					}
 				}
 			}

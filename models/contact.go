@@ -43,7 +43,7 @@ func UpdateContactField(ctx context.Context, db *sqlx.DB, contactUUID string, fi
 	return err
 }
 
-func UpdateContactFieldByURN(ctx context.Context, db *sqlx.DB, pathURN string, orgID int, fieldUUID string, fieldValue any) error {
+func UpdateContactFieldByURN(ctx context.Context, db *sqlx.DB, pathURN string, orgID int64, fieldUUID string, fieldValue any) error {
 	updateQuery := `
 		UPDATE public.contacts_contact
 		SET fields = COALESCE(
