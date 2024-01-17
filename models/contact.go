@@ -42,3 +42,32 @@ func UpdateContactField(ctx context.Context, db *sqlx.DB, contactUUID string, fi
 	)
 	return err
 }
+
+func UpdateContactFieldByURN(ctx context.Context, db *sqlx.DB, pathURN string, orgID int, fieldUUID string, fieldValue any) error {
+	updateQuery := `
+		UPDATE public.contacts_contact
+		SET fields = COALESCE(
+				JSONB_SET(
+						coalesce(fields, '{}'),
+						$1,
+						$2,
+						true
+				),
+				COALESCE(fields, '{}') || $3
+		)
+		FROM public.contacts_contacturn
+		WHERE public.contacts_contact.id = public.contacts_contacturn.contact_id
+			AND public.contacts_contacturn.path = $4
+			AND public.contacts_contacturn.org_id = $5;
+	`
+	_, err := db.ExecContext(
+		ctx,
+		updateQuery,
+		fmt.Sprintf(`{"%s"}`, fieldUUID),
+		fmt.Sprintf(`{"text": "%s"}`, fieldValue),
+		fmt.Sprintf(`{"%s": {"text": "%s"}}`, fieldUUID, fieldValue),
+		pathURN,
+		orgID,
+	)
+	return err
+}

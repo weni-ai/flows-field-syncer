@@ -15,6 +15,7 @@
   "table": {
       "name": "smuser_users",
       "table_destination": "contacts_contact",
+      "relation_type": "contact",
       "relation_column": "external_id",
       "columns": [
         {

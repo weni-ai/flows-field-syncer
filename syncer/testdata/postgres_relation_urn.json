@@ -1,0 +1,31 @@
+{
+  "service": {
+    "name": "pull pg",
+    "type": "postgres",
+    "access": {
+      "dsn": "postgres://temba:temba@localhost/temba?sslmode=disable"
+    }
+  },
+  "sync_rules": {
+    "time": "",
+    "interval": 5,
+    "org_id": 1,
+    "admin_id": 1
+  },
+  "table": {
+      "name": "smuser_users",
+      "table_destination": "contacts_contact",
+      "relation_type": "urn",
+      "relation_column": "id",
+      "columns": [
+        {
+          "name": "region",
+          "field_map_name": "ctt_region"
+        },
+        {
+          "name": "state",
+          "field_map_name": "ctt_state"
+        }
+      ]
+    }
+}

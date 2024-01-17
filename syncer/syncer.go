@@ -199,6 +199,7 @@ type SyncerService struct {
 type SyncerTable struct {
 	Name             string         `bson:"name" json:"name"`
 	TableDestination string         `bson:"table_destination" json:"table_destination"`
+	RelationType     string         `bson:"relation_type" json:"relation_type"`
 	RelationColumn   string         `bson:"relation_column" json:"relation_column"`
 	Columns          []SyncerColumn `bson:"columns" json:"columns"`
 }
