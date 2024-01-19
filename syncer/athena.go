@@ -21,6 +21,7 @@ type SyncerAthena struct {
 	Conf                 SyncerConf
 	Database             string
 	ResultOutputLocation string
+	WorkGroupName        string
 	Client               athenaiface.AthenaAPI
 }
 
@@ -30,6 +31,7 @@ const (
 	CONF_AWS_REGION            = "aws_region"
 	CONF_DATABASE              = "database"
 	CONF_OUTPUT_LOCATION       = "output_location"
+	CONF_WORKGROUP_NAME        = "workgroup_name"
 )
 
 func NewSyncerAthena(conf SyncerConf) (*SyncerAthena, error) {
@@ -49,6 +51,7 @@ func NewSyncerAthena(conf SyncerConf) (*SyncerAthena, error) {
 		Conf:                 conf,
 		Database:             conf.Service.Access[CONF_DATABASE].(string),
 		ResultOutputLocation: conf.Service.Access[CONF_OUTPUT_LOCATION].(string),
+		WorkGroupName:        conf.Service.Access[CONF_WORKGROUP_NAME].(string),
 		Client:               client,
 	}, nil
 }
@@ -81,6 +84,7 @@ func (s *SyncerAthena) MakeQuery(ctx context.Context, query string) ([]map[strin
 		ResultConfiguration: &athena.ResultConfiguration{
 			OutputLocation: aws.String(s.ResultOutputLocation),
 		},
+		WorkGroup: aws.String(s.WorkGroupName),
 	}
 
 	startQueryOutput, err := s.Client.StartQueryExecution(queryInput)

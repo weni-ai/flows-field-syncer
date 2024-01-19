@@ -7,6 +7,7 @@
       "aws_secret_access_key": "MOCK_SECRET",
       "aws_region": "sa-east-1",
       "database": "mydatabase",
+      "workgroup_name": "myworkgroup",
       "output_location": "s3://ath-dt-tst/query_results/"
     }
   },
