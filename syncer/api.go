@@ -3,11 +3,11 @@ package syncer
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.weni-ai/flows-field-syncer/configs"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type SyncerAPI struct {
@@ -46,8 +46,19 @@ func (a *SyncerAPI) createSyncerConfHandler(c echo.Context) error {
 	if err := c.Bind(syncerConf); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
-	syncerConf.ID = primitive.NewObjectID().Hex()
+	if syncerConf.SyncRules.ScheduleTime == "" {
+		syncerConf.SyncRules.ScheduleTime = time.Now().Format("15:04")
+	} else {
+		_, err := time.Parse("15:04", syncerConf.SyncRules.ScheduleTime)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "sync rule for schedule time is invalid"})
+		}
+	}
 	err := a.SyncerConfRepo.Create(*syncerConf)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	err = a.SyncerScheduler.RegisterSyncer(*syncerConf)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
@@ -65,7 +76,7 @@ func (a *SyncerAPI) getSyncerConfHandler(c echo.Context) error {
 	}
 
 	orgID := c.QueryParam("org_id")
-	if orgID == "" {
+	if orgID != "" {
 		syncerConfs, err := a.SyncerConfRepo.GetByOrgID(orgID)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -91,11 +102,12 @@ func (a *SyncerAPI) updateSyncerConfHandler(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
-	if !syncerConf.IsActive {
-		err := a.SyncerScheduler.UnregisterSyncer(*syncerConf)
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
+	err = a.SyncerScheduler.UnregisterSyncer(*syncerConf)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	if syncerConf.IsActive {
+		a.SyncerScheduler.RegisterSyncer(*syncerConf)
 	}
 
 	return c.NoContent(http.StatusNoContent)

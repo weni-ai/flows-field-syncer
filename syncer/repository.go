@@ -4,7 +4,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/pkg/errors"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -27,6 +29,7 @@ func NewSyncerConfRepository(db *mongo.Database) SyncerConfRepository {
 }
 
 func (r *syncerConfRepository) Create(syncerConf SyncerConf) error {
+	syncerConf.ID = primitive.NewObjectID().Hex()
 	_, err := r.collection.InsertOne(context.Background(), syncerConf)
 	return err
 }
@@ -34,6 +37,9 @@ func (r *syncerConfRepository) Create(syncerConf SyncerConf) error {
 func (r *syncerConfRepository) GetByID(id string) (SyncerConf, error) {
 	var syncerConf SyncerConf
 	err := r.collection.FindOne(context.Background(), bson.M{"_id": id}).Decode(&syncerConf)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return syncerConf, errors.New("sync config not found")
+	}
 	return syncerConf, err
 }
 
@@ -110,6 +116,7 @@ func NewSyncerLogRepository(db *mongo.Database) SyncerLogRepository {
 }
 
 func (r *syncerLogRepository) Create(syncerLog SyncerLog) error {
+	syncerLog.ID = primitive.NewObjectID().Hex()
 	_, err := r.collection.InsertOne(context.Background(), syncerLog)
 	return err
 }

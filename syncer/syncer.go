@@ -102,7 +102,7 @@ func (s *syncerScheduler) LoadSyncers() error {
 func (s *syncerScheduler) StartSyncers() error {
 	for _, sc := range s.Syncers {
 		startTime := sc.GetConfig().SyncRules.ScheduleTime
-		job, err := s.JobScheduler.At(startTime).Every(sc.GetConfig().SyncRules.Interval).Minute().Do(
+		job, err := s.JobScheduler.Every(1).Day().At(startTime).Do(
 			func() {
 				start := time.Now()
 				logMsg := fmt.Sprintf("start sync contact fields task at %s for syncer: %s, of type %s", start, sc.GetConfig().Service.Name, sc.GetConfig().Service.Type)
@@ -154,18 +154,55 @@ func (s *syncerScheduler) RegisterSyncer(scf SyncerConf) error {
 		return err
 	}
 
-	newJob, err := s.JobScheduler.
-		At(newSyncer.GetConfig().SyncRules.ScheduleTime).
-		Every(newSyncer.GetConfig().SyncRules.Interval).
-		Minute().
-		Do(func() {
-			start := time.Now()
-			slog.Info(fmt.Sprintf("start sync contact fields task at %s", start))
-			synched, err := newSyncer.SyncContactFields(s.flowsDB)
+	task := func() {
+		start := time.Now()
+		logMsg := fmt.Sprintf("start sync contact fields task at %s for syncer: %s, of type %s", start, newSyncer.GetConfig().Service.Name, newSyncer.GetConfig().Service.Type)
+		slog.Info(logMsg)
+		newLog := NewSyncerLog(
+			newSyncer.GetConfig().SyncRules.OrgID,
+			newSyncer.GetConfig().ID,
+			logMsg,
+			LogTypeInfo,
+		)
+		err := s.logRepo.Create(*newLog)
+		if err != nil {
+			slog.Error("Failed to create start info log: ", "err", err)
+		}
+		synched, err := newSyncer.SyncContactFields(s.flowsDB)
+		if err != nil {
+			slog.Error("Failed to sync contact fields", "err", err)
+			newLog := NewSyncerLog(
+				newSyncer.GetConfig().SyncRules.OrgID,
+				newSyncer.GetConfig().ID,
+				err,
+				LogTypeError,
+			)
+			err := s.logRepo.Create(*newLog)
 			if err != nil {
-				slog.Error("Failed to sync contact fields", "err", err)
+				slog.Error("Failed to create error log: ", "err", err)
 			}
-			slog.Info(fmt.Sprintf("synced %d, elapsed %s", synched, time.Since(start).String()))
+		}
+		slog.Info(fmt.Sprintf("synced %d, elapsed %s", synched, time.Since(start).String()))
+	}
+
+	stime, err := time.Parse("15:04", newSyncer.GetConfig().SyncRules.ScheduleTime)
+	if err != nil {
+		return err
+	}
+
+	currtime, _ := time.Parse("15:04", time.Now().Format("15:04"))
+	if stime.Compare(currtime) == 0 {
+		go task()
+	}
+
+	// syncerTime := stime.Format("15:04")
+	newJob, err := s.JobScheduler.
+		Every(1).
+		Day().
+		At(newSyncer.GetConfig().SyncRules.ScheduleTime).
+		Do(func() {
+			slog.Info("GGGGGGGGGGGGGGGGGGGGGGGGGGGG")
+			go task()
 		})
 	if err != nil {
 		slog.Error(
@@ -173,9 +210,12 @@ func (s *syncerScheduler) RegisterSyncer(scf SyncerConf) error {
 				newSyncer.GetConfig().Service.Name,
 				newSyncer.GetConfig().ID),
 			"err", err)
+		return err
 	} else {
 		s.SyncerJobs[newSyncer.GetConfig().ID] = newJob
 	}
+	s.JobScheduler.Stop()
+	s.JobScheduler.StartAsync()
 	return nil
 }
 
