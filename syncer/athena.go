@@ -127,10 +127,10 @@ func (s *SyncerAthena) MakeQuery(ctx context.Context, query string) ([]map[strin
 
 		for j, data := range row.Data {
 			columnName := *getQueryResultsOutput.ResultSet.ResultSetMetadata.ColumnInfo[j].Name
-
-			currentRow[columnName] = *data.VarCharValue
+			if data != nil && data.VarCharValue != nil {
+				currentRow[columnName] = *data.VarCharValue
+			}
 		}
-
 		resultRows = append(resultRows, currentRow)
 	}
 
@@ -143,6 +143,7 @@ func (s *SyncerAthena) SyncContactFields(db *sqlx.DB) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	slog.Info(fmt.Sprintf("sync query generated: %s", query))
 
 	results, err := s.MakeQuery(context.TODO(), query)
 	if err != nil {
@@ -152,11 +153,14 @@ func (s *SyncerAthena) SyncContactFields(db *sqlx.DB) (int, error) {
 	for _, r := range results {
 		for _, v := range s.Conf.Table.Columns {
 			resultValue := r[v.Name]
+			if resultValue == nil {
+				continue
+			}
 			found := true
 			// get contact field from flows
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			field, err := models.GetContactFieldByOrgAndLabel(ctx, db, s.Conf.SyncRules.OrgID, v.FieldMapName)
+			field, err := models.GetContactFieldByOrgAndKey(ctx, db, s.Conf.SyncRules.OrgID, v.FieldMapName)
 			if err != nil {
 				slog.Error(fmt.Sprintf("field could not be found in flows. field: %s", v.Name), "err", err)
 				found = false

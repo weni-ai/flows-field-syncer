@@ -128,7 +128,7 @@ func (s *SyncerBigQuery) SyncContactFields(db *sqlx.DB) (int, error) {
 			// get contact field from flows
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			field, err := models.GetContactFieldByOrgAndLabel(ctx, db, s.Conf.SyncRules.OrgID, v.FieldMapName)
+			field, err := models.GetContactFieldByOrgAndKey(ctx, db, s.Conf.SyncRules.OrgID, v.FieldMapName)
 			if err != nil {
 				slog.Error(fmt.Sprintf("field could not be found in flows. field: %s", v.Name), "err", err)
 				found = false

@@ -193,26 +193,24 @@ func (s *syncerScheduler) RegisterSyncer(scf SyncerConf) error {
 	currtime, _ := time.Parse("15:04", time.Now().Format("15:04"))
 	if stime.Compare(currtime) == 0 {
 		go task()
-	}
-
-	// syncerTime := stime.Format("15:04")
-	newJob, err := s.JobScheduler.
-		Every(1).
-		Day().
-		At(newSyncer.GetConfig().SyncRules.ScheduleTime).
-		Do(func() {
-			slog.Info("GGGGGGGGGGGGGGGGGGGGGGGGGGGG")
-			go task()
-		})
-	if err != nil {
-		slog.Error(
-			fmt.Sprintf("Error on create sync job to %s with id %s",
-				newSyncer.GetConfig().Service.Name,
-				newSyncer.GetConfig().ID),
-			"err", err)
-		return err
 	} else {
-		s.SyncerJobs[newSyncer.GetConfig().ID] = newJob
+		newJob, err := s.JobScheduler.
+			Every(1).
+			Day().
+			At(newSyncer.GetConfig().SyncRules.ScheduleTime).
+			Do(func() {
+				go task()
+			})
+		if err != nil {
+			slog.Error(
+				fmt.Sprintf("Error on create sync job to %s with id %s",
+					newSyncer.GetConfig().Service.Name,
+					newSyncer.GetConfig().ID),
+				"err", err)
+			return err
+		} else {
+			s.SyncerJobs[newSyncer.GetConfig().ID] = newJob
+		}
 	}
 	s.JobScheduler.Stop()
 	s.JobScheduler.StartAsync()

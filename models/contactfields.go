@@ -54,7 +54,7 @@ func NewContactField(label, key, valueType string, orgID, createdByID, modifiedB
 	}
 }
 
-func GetContactFieldByOrgAndLabel(ctx context.Context, db *sqlx.DB, orgID int64, label string) (ContactField, error) {
+func GetContactFieldByOrgAndKey(ctx context.Context, db *sqlx.DB, orgID int64, key string) (ContactField, error) {
 	var contactField ContactField
 
 	query := `
@@ -80,7 +80,7 @@ func GetContactFieldByOrgAndLabel(ctx context.Context, db *sqlx.DB, orgID int64,
 			key = $2
 	`
 
-	err := db.GetContext(ctx, &contactField, query, orgID, label)
+	err := db.GetContext(ctx, &contactField, query, orgID, key)
 	if err != nil {
 		return ContactField{}, fmt.Errorf("error getting contact field: %v", err)
 	}
