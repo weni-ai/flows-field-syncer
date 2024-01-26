@@ -17,7 +17,7 @@ func TestSyncerPostgres(t *testing.T) {
 	syncerPostgres, err := NewSyncer(*conf)
 	assert.NoError(t, err)
 
-	config := configs.NewConfig()
+	config := configs.GetConfig()
 	db, err := sqlx.Open("postgres", config.FlowsDB)
 	if err != nil {
 		t.Fatal(err)

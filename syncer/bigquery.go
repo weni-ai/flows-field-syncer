@@ -58,7 +58,7 @@ func (s *SyncerBigQuery) GetLastModified() (time.Time, error) {
 	return time.Time{}, errors.New("not implemented")
 }
 
-func (s *SyncerBigQuery) GenerateSelectToSyncQuery() (string, error) {
+func (s *SyncerBigQuery) GenerateSelectToSyncQuery(offset, limit int) (string, error) {
 	var columns []string
 	table := s.Conf.Table
 
@@ -110,7 +110,8 @@ func (s *SyncerBigQuery) MakeQuery(ctx context.Context, query string) ([]map[str
 
 func (s *SyncerBigQuery) SyncContactFields(db *sqlx.DB) (int, error) {
 	var updated int
-	query, err := s.GenerateSelectToSyncQuery()
+	// TODO offset and limit
+	query, err := s.GenerateSelectToSyncQuery(0, 0)
 	if err != nil {
 		return 0, errors.Wrap(err, "error generating query")
 	}
@@ -188,7 +189,6 @@ func (s *SyncerBigQuery) SyncContactFields(db *sqlx.DB) (int, error) {
 							slog.Error(errMsg, "err", err)
 						}
 					}
-
 				}
 			}
 		}

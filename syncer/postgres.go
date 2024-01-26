@@ -10,7 +10,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/pkg/errors"
-	"github.weni-ai/flows-field-syncer/models"
+	"github.weni-ai/flows-field-syncer/configs"
 )
 
 type SyncerPG struct {
@@ -35,7 +35,7 @@ func (s *SyncerPG) GetLastModified() (time.Time, error) {
 	return time.Time{}, errors.New("not implemented")
 }
 
-func (s *SyncerPG) GenerateSelectToSyncQuery() (string, error) {
+func (s *SyncerPG) GenerateSelectToSyncQuery(offset, limit int) (string, error) {
 	var columns []string
 	table := s.Conf.Table
 
@@ -46,12 +46,15 @@ func (s *SyncerPG) GenerateSelectToSyncQuery() (string, error) {
 	}
 	columnList := strings.Join(columns, ", ")
 
-	query := fmt.Sprintf("SELECT %s FROM %s", columnList, table.Name)
+	query := fmt.Sprintf("SELECT %s FROM %s OFFSET %d", columnList, table.Name, offset)
+	if limit != 0 {
+		query = fmt.Sprintf("%s LIMIT %d", query, limit)
+	}
 	return query, nil
 }
 
 func (s *SyncerPG) MakeQuery(ctx context.Context, query string) ([]map[string]any, error) {
-	log.Println(query)
+	slog.Info(fmt.Sprintf("making query: %s", query))
 	rows, err := s.DB.QueryxContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -67,95 +70,43 @@ func (s *SyncerPG) MakeQuery(ctx context.Context, query string) ([]map[string]an
 		}
 		results = append(results, result)
 	}
+	rows.Close()
 	return results, nil
 }
 
 func (s *SyncerPG) SyncContactFields(db *sqlx.DB) (int, error) {
 	var updated int
-	query, err := s.GenerateSelectToSyncQuery()
-	if err != nil {
-		return 0, errors.Wrap(err, "error generating query")
-	}
-
-	results, err := s.MakeQuery(context.TODO(), query)
-	if err != nil {
-		return 0, errors.Wrap(err, "error executing query")
-	}
-
-	// for each contact
-	for _, r := range results {
-		// slog.Info(fmt.Sprint(r))
-		// update fields
-		for _, v := range s.Conf.Table.Columns {
-			resultValue := r[v.Name]
-			found := true
-			// get contact field from flows
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			field, err := models.GetContactFieldByOrgAndKey(ctx, db, s.Conf.SyncRules.OrgID, v.FieldMapName)
-			if err != nil {
-				slog.Error(fmt.Sprintf("field could not be found in flows. field: %s", v.Name), "err", err)
-				found = false
-			}
-			if found {
-				// if field exists in flows, update that field in contact
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				switch s.Conf.Table.RelationType {
-				case RelationTypeContact:
-					err := models.UpdateContactField(ctx, db, r[s.Conf.Table.RelationColumn].(string), field.UUID, resultValue)
-					if err != nil {
-						errMsg := fmt.Sprintf("field could not be updated: %v", field)
-						slog.Error(errMsg, "err", err)
-						return updated, errors.Wrap(err, errMsg)
-					}
-				case RelationTypeURN:
-					err := models.UpdateContactFieldByURN(ctx, db, r[s.Conf.Table.RelationColumn].(string), s.Conf.SyncRules.OrgID, field.UUID, resultValue)
-					if err != nil {
-						errMsg := fmt.Sprintf("field could not be updated: %v", field)
-						slog.Error(errMsg, "err", err)
-						return updated, errors.Wrap(err, errMsg)
-					}
-				}
-			} else {
-				// if field not exist, create it and create it in contact field column jsonb
-				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				defer cancel()
-				cf := models.NewContactField(
-					v.FieldMapName,
-					v.FieldMapName,
-					models.ScanValueType(resultValue),
-					s.Conf.SyncRules.OrgID,
-					s.Conf.SyncRules.AdminID,
-					s.Conf.SyncRules.AdminID)
-
-				err := models.CreateContactField(ctx, db, cf)
-				if err != nil {
-					errMsg := fmt.Sprintf("error creating contact field: %v", v.FieldMapName)
-					slog.Error(errMsg, "err", err)
-					return updated, errors.Wrap(err, errMsg)
-				} else {
-					switch s.Conf.Table.RelationType {
-					case RelationTypeContact:
-						err := models.UpdateContactField(ctx, db, r[s.Conf.Table.RelationColumn].(string), cf.UUID, resultValue)
-						if err != nil {
-							errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
-							slog.Error(errMsg, "err", err)
-							return updated, errors.Wrap(err, errMsg)
-						}
-					case RelationTypeURN:
-						err := models.UpdateContactFieldByURN(ctx, db, r[s.Conf.Table.RelationColumn].(string), s.Conf.SyncRules.OrgID, cf.UUID, resultValue)
-						if err != nil {
-							errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
-							slog.Error(errMsg, "err", err)
-							return updated, errors.Wrap(err, errMsg)
-						}
-					}
-				}
-			}
+	conf := configs.GetConfig()
+	batchSize := conf.BatchSize
+	for offset := 0; ; offset += batchSize {
+		query, err := s.GenerateSelectToSyncQuery(offset, batchSize)
+		if err != nil {
+			return 0, errors.Wrap(err, "error generating query")
 		}
-		updated++
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*600)
+		defer cancel()
+		results, err := s.MakeQuery(ctx, query)
+		if err != nil {
+			return 0, errors.Wrap(err, "error executing query")
+		}
+
+		// if no results stop perform sync
+		if len(results) == 0 {
+			break
+		}
+
+		updatedPerformed, err := performSync(s.GetConfig(), db, results)
+		updated += updatedPerformed
+		if err != nil {
+			return updated, nil
+		}
+
+		if batchSize == 0 {
+			break
+		}
 	}
+
 	return updated, nil
 }
 

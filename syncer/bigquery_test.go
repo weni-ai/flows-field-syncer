@@ -36,7 +36,7 @@ func TestSyncerBigquery(t *testing.T) {
 
 	syncerBigquery.customIterator = expectedResults
 
-	config := configs.NewConfig()
+	config := configs.GetConfig()
 	db, err := sqlx.Open("postgres", config.FlowsDB)
 	if err != nil {
 		t.Fatal(err)

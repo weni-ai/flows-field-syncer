@@ -21,7 +21,7 @@ import (
 )
 
 func main() {
-	config := configs.NewConfig()
+	config := configs.GetConfig()
 	if config.SentryDSN != "" {
 		initLogger(config)
 		defer sentry.Flush(2 * time.Second)
@@ -42,7 +42,7 @@ func main() {
 	syncerConfRepo := syncer.NewSyncerConfRepository(syncerdb)
 	syncerLogRepo := syncer.NewSyncerLogRepository(syncerdb)
 
-	sc := syncer.NewSyncerScheduler(
+	sc := syncer.NewSyncerSchedulerM(
 		syncerLogRepo,
 		syncerConfRepo,
 		flowsdb,

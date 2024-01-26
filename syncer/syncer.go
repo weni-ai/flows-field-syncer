@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/go-co-op/gocron"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/pkg/errors"
+	"github.weni-ai/flows-field-syncer/models"
 )
 
 const (
@@ -28,208 +28,10 @@ const (
 	LogTypeError = "error"
 )
 
-type SyncerScheduler interface {
-	StartLogCleaner() error
-	LoadSyncers() error
-	StartSyncers() error
-	RegisterSyncer(SyncerConf) error
-	UnregisterSyncer(SyncerConf) error
-}
-
-type syncerScheduler struct {
-	logRepo  SyncerLogRepository
-	confRepo SyncerConfRepository
-	flowsDB  *sqlx.DB
-
-	JobScheduler *gocron.Scheduler
-	Syncers      map[string]Syncer
-	SyncerJobs   map[string]*gocron.Job
-}
-
-func NewSyncerScheduler(logRepo SyncerLogRepository, confRepo SyncerConfRepository, flowsDB *sqlx.DB) SyncerScheduler {
-	return &syncerScheduler{
-		Syncers:      make(map[string]Syncer),
-		SyncerJobs:   make(map[string]*gocron.Job),
-		JobScheduler: gocron.NewScheduler(time.UTC),
-		logRepo:      logRepo,
-		confRepo:     confRepo,
-		flowsDB:      flowsDB,
-	}
-}
-
-func (s *syncerScheduler) StartLogCleaner() error {
-	_, err := s.JobScheduler.Every(1).
-		Day().
-		At("00:00").
-		Do(func() {
-			retentionPeriod := 5 * 24 * time.Hour // 5 days
-			currentTime := time.Now()
-			retentionLimit := currentTime.Add(-retentionPeriod)
-
-			deletedCount, err := s.logRepo.DeleteOlderThan(retentionLimit)
-			if err != nil {
-				slog.Error("Error on delete older logs:", "err", err)
-			} else {
-				slog.Info(fmt.Sprintf("Deleted %d logs older than %s\n", deletedCount, retentionLimit))
-			}
-		})
-	if err != nil {
-		slog.Error("error on start log cleaner task", "err", err)
-		return err
-	}
-	s.JobScheduler.StartAsync()
-	return nil
-}
-
-func (s *syncerScheduler) LoadSyncers() error {
-	loadedSyncers := make(map[string]Syncer)
-	confs, err := s.confRepo.GetAll()
-	if err != nil {
-		return errors.Wrap(err, "error on get all syncers")
-	}
-	for _, cf := range confs {
-		sc, err := NewSyncer(cf)
-		if err != nil {
-			slog.Error("error on instantiate syncer", "err", err)
-		} else {
-			loadedSyncers[cf.ID] = sc
-		}
-	}
-	s.Syncers = loadedSyncers
-	return nil
-}
-
-func (s *syncerScheduler) StartSyncers() error {
-	for _, sc := range s.Syncers {
-		startTime := sc.GetConfig().SyncRules.ScheduleTime
-		job, err := s.JobScheduler.Every(1).Day().At(startTime).Do(
-			func() {
-				start := time.Now()
-				logMsg := fmt.Sprintf("start sync contact fields task at %s for syncer: %s, of type %s", start, sc.GetConfig().Service.Name, sc.GetConfig().Service.Type)
-				slog.Info(logMsg)
-				newLog := NewSyncerLog(
-					sc.GetConfig().SyncRules.OrgID,
-					sc.GetConfig().ID,
-					logMsg,
-					LogTypeInfo,
-				)
-				err := s.logRepo.Create(*newLog)
-				if err != nil {
-					slog.Error("Failed to create start info log: ", "err", err)
-				}
-
-				synched, err := sc.SyncContactFields(s.flowsDB)
-				if err != nil {
-					slog.Error("Failed to sync contact fields", "err", err)
-					newLog := NewSyncerLog(
-						sc.GetConfig().SyncRules.OrgID,
-						sc.GetConfig().ID,
-						err,
-						LogTypeError,
-					)
-					err := s.logRepo.Create(*newLog)
-					if err != nil {
-						slog.Error("Failed to create error log: ", "err", err)
-					}
-				}
-				slog.Info(fmt.Sprintf("synced %d, elapsed %s", synched, time.Since(start).String()))
-			})
-		if err != nil {
-			slog.Error(
-				fmt.Sprintf("Error on create sync job to %s with id %s",
-					sc.GetConfig().Service.Name,
-					sc.GetConfig().ID),
-				"err", err)
-		} else {
-			s.SyncerJobs[sc.GetConfig().ID] = job
-		}
-	}
-	slog.Info(fmt.Sprintf("%d Syncer started", len(s.SyncerJobs)))
-	return nil
-}
-
-func (s *syncerScheduler) RegisterSyncer(scf SyncerConf) error {
-	newSyncer, err := NewSyncer(scf)
-	if err != nil {
-		return err
-	}
-
-	task := func() {
-		start := time.Now()
-		logMsg := fmt.Sprintf("start sync contact fields task at %s for syncer: %s, of type %s", start, newSyncer.GetConfig().Service.Name, newSyncer.GetConfig().Service.Type)
-		slog.Info(logMsg)
-		newLog := NewSyncerLog(
-			newSyncer.GetConfig().SyncRules.OrgID,
-			newSyncer.GetConfig().ID,
-			logMsg,
-			LogTypeInfo,
-		)
-		err := s.logRepo.Create(*newLog)
-		if err != nil {
-			slog.Error("Failed to create start info log: ", "err", err)
-		}
-		synched, err := newSyncer.SyncContactFields(s.flowsDB)
-		if err != nil {
-			slog.Error("Failed to sync contact fields", "err", err)
-			newLog := NewSyncerLog(
-				newSyncer.GetConfig().SyncRules.OrgID,
-				newSyncer.GetConfig().ID,
-				err,
-				LogTypeError,
-			)
-			err := s.logRepo.Create(*newLog)
-			if err != nil {
-				slog.Error("Failed to create error log: ", "err", err)
-			}
-		}
-		slog.Info(fmt.Sprintf("synced %d, elapsed %s", synched, time.Since(start).String()))
-	}
-
-	stime, err := time.Parse("15:04", newSyncer.GetConfig().SyncRules.ScheduleTime)
-	if err != nil {
-		return err
-	}
-
-	currtime, _ := time.Parse("15:04", time.Now().Format("15:04"))
-	if stime.Compare(currtime) == 0 {
-		go task()
-	} else {
-		newJob, err := s.JobScheduler.
-			Every(1).
-			Day().
-			At(newSyncer.GetConfig().SyncRules.ScheduleTime).
-			Do(func() {
-				go task()
-			})
-		if err != nil {
-			slog.Error(
-				fmt.Sprintf("Error on create sync job to %s with id %s",
-					newSyncer.GetConfig().Service.Name,
-					newSyncer.GetConfig().ID),
-				"err", err)
-			return err
-		} else {
-			s.SyncerJobs[newSyncer.GetConfig().ID] = newJob
-		}
-	}
-	s.JobScheduler.Stop()
-	s.JobScheduler.StartAsync()
-	return nil
-}
-
-func (s *syncerScheduler) UnregisterSyncer(scf SyncerConf) error {
-	err := s.JobScheduler.RemoveByID(s.SyncerJobs[scf.ID])
-	if err != nil {
-		return err
-	}
-	s.SyncerJobs[scf.ID] = nil
-	return nil
-}
-
 type Syncer interface {
 	GetLastModified() (time.Time, error)
 	SyncContactFields(*sqlx.DB) (int, error)
-	GenerateSelectToSyncQuery() (string, error)
+	GenerateSelectToSyncQuery(int, int) (string, error)
 	MakeQuery(context.Context, string) ([]map[string]any, error)
 	Close() error
 	GetConfig() SyncerConf
@@ -305,4 +107,83 @@ func (c *SyncerConf) Validate() error {
 }
 
 type SyncerLogCleaner interface {
+}
+
+func performSync(conf SyncerConf, db *sqlx.DB, results []map[string]any) (int, error) {
+	var updated int
+	// for each contact
+	for _, r := range results {
+		// slog.Info(fmt.Sprint(r))
+		// update fields
+		for _, v := range conf.Table.Columns {
+			resultValue := r[v.Name]
+			found := true
+			// get contact field from flows
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			field, err := models.GetContactFieldByOrgAndKey(ctx, db, conf.SyncRules.OrgID, v.FieldMapName)
+			if err != nil {
+				slog.Error(fmt.Sprintf("field could not be found in flows. field: %s", v.Name), "err", err)
+				found = false
+			}
+			if found {
+				// if field exists in flows, update that field in contact
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				switch conf.Table.RelationType {
+				case RelationTypeContact:
+					err := models.UpdateContactField(ctx, db, r[conf.Table.RelationColumn].(string), field.UUID, resultValue)
+					if err != nil {
+						errMsg := fmt.Sprintf("field could not be updated: %v", field)
+						slog.Error(errMsg, "err", err)
+						return updated, errors.Wrap(err, errMsg)
+					}
+				case RelationTypeURN:
+					err := models.UpdateContactFieldByURN(ctx, db, r[conf.Table.RelationColumn].(string), conf.SyncRules.OrgID, field.UUID, resultValue)
+					if err != nil {
+						errMsg := fmt.Sprintf("field could not be updated: %v", field)
+						slog.Error(errMsg, "err", err)
+						return updated, errors.Wrap(err, errMsg)
+					}
+				}
+			} else {
+				// if field not exist, create it and create it in contact field column jsonb
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				cf := models.NewContactField(
+					v.FieldMapName,
+					v.FieldMapName,
+					models.ScanValueType(resultValue),
+					conf.SyncRules.OrgID,
+					conf.SyncRules.AdminID,
+					conf.SyncRules.AdminID)
+
+				err := models.CreateContactField(ctx, db, cf)
+				if err != nil {
+					errMsg := fmt.Sprintf("error creating contact field: %v", v.FieldMapName)
+					slog.Error(errMsg, "err", err)
+					return updated, errors.Wrap(err, errMsg)
+				} else {
+					switch conf.Table.RelationType {
+					case RelationTypeContact:
+						err := models.UpdateContactField(ctx, db, r[conf.Table.RelationColumn].(string), cf.UUID, resultValue)
+						if err != nil {
+							errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
+							slog.Error(errMsg, "err", err)
+							return updated, errors.Wrap(err, errMsg)
+						}
+					case RelationTypeURN:
+						err := models.UpdateContactFieldByURN(ctx, db, r[conf.Table.RelationColumn].(string), conf.SyncRules.OrgID, cf.UUID, resultValue)
+						if err != nil {
+							errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
+							slog.Error(errMsg, "err", err)
+							return updated, errors.Wrap(err, errMsg)
+						}
+					}
+				}
+			}
+		}
+		updated++
+	}
+	return updated, nil
 }

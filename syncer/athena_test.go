@@ -87,7 +87,7 @@ func TestSyncerAthena(t *testing.T) {
 		Client:               athenaMockClient,
 	}
 
-	config := configs.NewConfig()
+	config := configs.GetConfig()
 	db, err := sqlx.Open("postgres", config.FlowsDB)
 	if err != nil {
 		t.Fatal(err)
