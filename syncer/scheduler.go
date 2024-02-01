@@ -1,13 +1,15 @@
 package syncer
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"time"
 
-	"github.com/go-co-op/gocron"
+	"github.com/bsm/redislock"
 	"github.com/jmoiron/sqlx"
 	"github.com/pkg/errors"
+	"github.com/redis/go-redis/v9"
 	"github.weni-ai/flows-field-syncer/scheduler"
 )
 
@@ -15,17 +17,22 @@ type syncerSchedulerM struct {
 	logRepo  SyncerLogRepository
 	confRepo SyncerConfRepository
 	flowsDB  *sqlx.DB
+	redis    *redis.Client
+	locker   *redislock.Client
 
 	TaskScheduler *scheduler.Scheduler
 	Syncers       map[string]Syncer
 	SyncerTasks   map[string]func()
 }
 
-func NewSyncerSchedulerM(logRepo SyncerLogRepository, confRepo SyncerConfRepository, flowsDB *sqlx.DB) SyncerScheduler {
+func NewSyncerSchedulerM(logRepo SyncerLogRepository, confRepo SyncerConfRepository, flowsDB *sqlx.DB, redis *redis.Client, locker *redislock.Client) SyncerScheduler {
 	return &syncerSchedulerM{
 		Syncers:       make(map[string]Syncer),
 		SyncerTasks:   make(map[string]func()),
 		TaskScheduler: scheduler.NewScheduler(),
+
+		redis:  redis,
+		locker: locker,
 
 		logRepo:  logRepo,
 		confRepo: confRepo,
@@ -34,12 +41,23 @@ func NewSyncerSchedulerM(logRepo SyncerLogRepository, confRepo SyncerConfReposit
 }
 
 func (s *syncerSchedulerM) StartLogCleaner() error {
+	taskKey := "cleaner"
 	s.TaskScheduler.AddTask(
-		"cleaner",
+		taskKey,
 		[]scheduler.ScheduleTime{
 			scheduler.ScheduleTime("01:00"),
 		},
 		func() {
+			ctx := context.Background()
+			lock, err := s.locker.Obtain(ctx, taskKey, time.Hour, nil)
+			if err == redislock.ErrNotObtained {
+				slog.Info(fmt.Sprintf("%s task still in progress", taskKey))
+				return
+			} else if err != nil {
+				slog.Error("Could not obtain lock!", "err", err)
+				return
+			}
+			defer lock.Release(ctx)
 			retentionPeriod := 5 * 24 * time.Hour // 5 days
 			currentTime := time.Now()
 			retentionLimit := currentTime.Add(-retentionPeriod)
@@ -75,38 +93,6 @@ func (s *syncerSchedulerM) LoadSyncers() error {
 
 func (s *syncerSchedulerM) StartSyncers() error {
 	for _, sc := range s.Syncers {
-		taskExecution := func() {
-			start := time.Now()
-			logMsg := fmt.Sprintf("start sync contact fields task at %s for syncer: %s, of type %s", start, sc.GetConfig().Service.Name, sc.GetConfig().Service.Type)
-			slog.Info(logMsg)
-			newLog := NewSyncerLog(
-				sc.GetConfig().SyncRules.OrgID,
-				sc.GetConfig().ID,
-				logMsg,
-				LogTypeInfo,
-			)
-			err := s.logRepo.Create(*newLog)
-			if err != nil {
-				slog.Error("Failed to create start info log: ", "err", err)
-			}
-
-			synched, err := sc.SyncContactFields(s.flowsDB)
-			if err != nil {
-				slog.Error("Failed to sync contact fields", "err", err)
-				newLog := NewSyncerLog(
-					sc.GetConfig().SyncRules.OrgID,
-					sc.GetConfig().ID,
-					err,
-					LogTypeError,
-				)
-				err := s.logRepo.Create(*newLog)
-				if err != nil {
-					slog.Error("Failed to create error log: ", "err", err)
-				}
-			}
-			slog.Info(fmt.Sprintf("synced %d, elapsed %s", synched, time.Since(start).String()))
-		}
-
 		s.TaskScheduler.AddTask(
 			sc.GetConfig().ID,
 			[]scheduler.ScheduleTime{
@@ -114,7 +100,9 @@ func (s *syncerSchedulerM) StartSyncers() error {
 					sc.GetConfig().SyncRules.ScheduleTime,
 				),
 			},
-			taskExecution,
+			func() {
+				s.syncerTask(sc)
+			},
 		)
 	}
 
@@ -128,37 +116,6 @@ func (s *syncerSchedulerM) RegisterSyncer(scf SyncerConf) error {
 		return err
 	}
 
-	taskExec := func() {
-		start := time.Now()
-		logMsg := fmt.Sprintf("start sync contact fields task at %s for syncer: %s, of type %s", start, newSyncer.GetConfig().Service.Name, newSyncer.GetConfig().Service.Type)
-		slog.Info(logMsg)
-		newLog := NewSyncerLog(
-			newSyncer.GetConfig().SyncRules.OrgID,
-			newSyncer.GetConfig().ID,
-			logMsg,
-			LogTypeInfo,
-		)
-		err := s.logRepo.Create(*newLog)
-		if err != nil {
-			slog.Error("Failed to create start info log: ", "err", err)
-		}
-		synched, err := newSyncer.SyncContactFields(s.flowsDB)
-		if err != nil {
-			slog.Error("Failed to sync contact fields", "err", err)
-			newLog := NewSyncerLog(
-				newSyncer.GetConfig().SyncRules.OrgID,
-				newSyncer.GetConfig().ID,
-				err,
-				LogTypeError,
-			)
-			err := s.logRepo.Create(*newLog)
-			if err != nil {
-				slog.Error("Failed to create error log: ", "err", err)
-			}
-		}
-		slog.Info(fmt.Sprintf("synced %d, elapsed %s", synched, time.Since(start).String()))
-	}
-
 	s.TaskScheduler.AddTask(
 		newSyncer.GetConfig().ID,
 		[]scheduler.ScheduleTime{
@@ -166,7 +123,9 @@ func (s *syncerSchedulerM) RegisterSyncer(scf SyncerConf) error {
 				newSyncer.GetConfig().SyncRules.ScheduleTime,
 			),
 		},
-		taskExec,
+		func() {
+			s.syncerTask(newSyncer)
+		},
 	)
 
 	return nil
@@ -183,194 +142,57 @@ type SyncerScheduler interface {
 	StartSyncers() error
 	RegisterSyncer(SyncerConf) error
 	UnregisterSyncer(SyncerConf) error
+	Close() error
 }
 
-type syncerScheduler struct {
-	logRepo  SyncerLogRepository
-	confRepo SyncerConfRepository
-	flowsDB  *sqlx.DB
-
-	JobScheduler *gocron.Scheduler
-	Syncers      map[string]Syncer
-	SyncerJobs   map[string]*gocron.Job
-}
-
-func NewSyncerScheduler(logRepo SyncerLogRepository, confRepo SyncerConfRepository, flowsDB *sqlx.DB) SyncerScheduler {
-	return &syncerScheduler{
-		Syncers:      make(map[string]Syncer),
-		SyncerJobs:   make(map[string]*gocron.Job),
-		JobScheduler: gocron.NewScheduler(time.UTC),
-		logRepo:      logRepo,
-		confRepo:     confRepo,
-		flowsDB:      flowsDB,
-	}
-}
-
-func (s *syncerScheduler) StartLogCleaner() error {
-	_, err := s.JobScheduler.Every(1).
-		Day().
-		At("00:00").
-		Do(func() {
-			retentionPeriod := 5 * 24 * time.Hour // 5 days
-			currentTime := time.Now()
-			retentionLimit := currentTime.Add(-retentionPeriod)
-
-			deletedCount, err := s.logRepo.DeleteOlderThan(retentionLimit)
-			if err != nil {
-				slog.Error("Error on delete older logs:", "err", err)
-			} else {
-				slog.Info(fmt.Sprintf("Deleted %d logs older than %s\n", deletedCount, retentionLimit))
-			}
-		})
-	if err != nil {
-		slog.Error("error on start log cleaner task", "err", err)
-		return err
-	}
-	s.JobScheduler.StartAsync()
+func (s *syncerSchedulerM) Close() error {
+	s.TaskScheduler.Stop()
 	return nil
 }
 
-func (s *syncerScheduler) LoadSyncers() error {
-	loadedSyncers := make(map[string]Syncer)
-	confs, err := s.confRepo.GetAll()
+func (s *syncerSchedulerM) syncerTask(syncer Syncer) {
+	ctx := context.Background()
+	taskKey := syncer.GetConfig().ID
+	lock, err := s.locker.Obtain(ctx, taskKey, time.Hour*2, nil)
+	if err == redislock.ErrNotObtained {
+		slog.Info(fmt.Sprintf("%s sync still in progress", taskKey))
+		return
+	} else if err != nil {
+		slog.Error("Could not obtain lock!", "err", err)
+		return
+	}
+	defer lock.Release(ctx)
+
+	start := time.Now()
+	logMsg := fmt.Sprintf("start sync contact fields task at %s for syncer: %s(%s), of type %s",
+		start, syncer.GetConfig().ID, syncer.GetConfig().Service.Name, syncer.GetConfig().Service.Type)
+	slog.Info(logMsg)
+	newLog := NewSyncerLog(
+		syncer.GetConfig().SyncRules.OrgID,
+		syncer.GetConfig().ID,
+		logMsg,
+		LogTypeInfo,
+	)
+	err = s.logRepo.Create(*newLog)
 	if err != nil {
-		return errors.Wrap(err, "error on get all syncers")
+		slog.Error("Failed to create start info log: ", "err", err)
 	}
-	for _, cf := range confs {
-		sc, err := NewSyncer(cf)
-		if err != nil {
-			slog.Error("error on instantiate syncer", "err", err)
-		} else {
-			loadedSyncers[cf.ID] = sc
-		}
-	}
-	s.Syncers = loadedSyncers
-	return nil
-}
 
-func (s *syncerScheduler) StartSyncers() error {
-	for _, sc := range s.Syncers {
-		startTime := sc.GetConfig().SyncRules.ScheduleTime
-		job, err := s.JobScheduler.Every(1).Day().At(startTime).Do(
-			func() {
-				start := time.Now()
-				logMsg := fmt.Sprintf("start sync contact fields task at %s for syncer: %s, of type %s", start, sc.GetConfig().Service.Name, sc.GetConfig().Service.Type)
-				slog.Info(logMsg)
-				newLog := NewSyncerLog(
-					sc.GetConfig().SyncRules.OrgID,
-					sc.GetConfig().ID,
-					logMsg,
-					LogTypeInfo,
-				)
-				err := s.logRepo.Create(*newLog)
-				if err != nil {
-					slog.Error("Failed to create start info log: ", "err", err)
-				}
-
-				synched, err := sc.SyncContactFields(s.flowsDB)
-				if err != nil {
-					slog.Error("Failed to sync contact fields", "err", err)
-					newLog := NewSyncerLog(
-						sc.GetConfig().SyncRules.OrgID,
-						sc.GetConfig().ID,
-						err,
-						LogTypeError,
-					)
-					err := s.logRepo.Create(*newLog)
-					if err != nil {
-						slog.Error("Failed to create error log: ", "err", err)
-					}
-				}
-				slog.Info(fmt.Sprintf("synced %d, elapsed %s", synched, time.Since(start).String()))
-			})
-		if err != nil {
-			slog.Error(
-				fmt.Sprintf("Error on create sync job to %s with id %s",
-					sc.GetConfig().Service.Name,
-					sc.GetConfig().ID),
-				"err", err)
-		} else {
-			s.SyncerJobs[sc.GetConfig().ID] = job
-		}
-	}
-	slog.Info(fmt.Sprintf("%d Syncer started", len(s.SyncerJobs)))
-	return nil
-}
-
-func (s *syncerScheduler) RegisterSyncer(scf SyncerConf) error {
-	newSyncer, err := NewSyncer(scf)
+	synched, err := syncer.SyncContactFields(s.flowsDB)
 	if err != nil {
-		return err
-	}
-
-	task := func() {
-		start := time.Now()
-		logMsg := fmt.Sprintf("start sync contact fields task at %s for syncer: %s, of type %s", start, newSyncer.GetConfig().Service.Name, newSyncer.GetConfig().Service.Type)
-		slog.Info(logMsg)
+		slog.Error("Failed to sync contact fields", "err", err)
 		newLog := NewSyncerLog(
-			newSyncer.GetConfig().SyncRules.OrgID,
-			newSyncer.GetConfig().ID,
-			logMsg,
-			LogTypeInfo,
+			syncer.GetConfig().SyncRules.OrgID,
+			syncer.GetConfig().ID,
+			err,
+			LogTypeError,
 		)
 		err := s.logRepo.Create(*newLog)
 		if err != nil {
-			slog.Error("Failed to create start info log: ", "err", err)
-		}
-		synched, err := newSyncer.SyncContactFields(s.flowsDB)
-		if err != nil {
-			slog.Error("Failed to sync contact fields", "err", err)
-			newLog := NewSyncerLog(
-				newSyncer.GetConfig().SyncRules.OrgID,
-				newSyncer.GetConfig().ID,
-				err,
-				LogTypeError,
-			)
-			err := s.logRepo.Create(*newLog)
-			if err != nil {
-				slog.Error("Failed to create error log: ", "err", err)
-			}
-		}
-		slog.Info(fmt.Sprintf("synced %d, elapsed %s", synched, time.Since(start).String()))
-	}
-
-	stime, err := time.Parse("15:04", newSyncer.GetConfig().SyncRules.ScheduleTime)
-	if err != nil {
-		return err
-	}
-
-	currtime, _ := time.Parse("15:04", time.Now().Format("15:04"))
-	if stime.Compare(currtime) == 0 {
-		go task()
-	} else {
-		newJob, err := s.JobScheduler.
-			Every(1).
-			Day().
-			At(newSyncer.GetConfig().SyncRules.ScheduleTime).
-			Do(func() {
-				go task()
-			})
-		if err != nil {
-			slog.Error(
-				fmt.Sprintf("Error on create sync job to %s with id %s",
-					newSyncer.GetConfig().Service.Name,
-					newSyncer.GetConfig().ID),
-				"err", err)
-			return err
-		} else {
-			s.SyncerJobs[newSyncer.GetConfig().ID] = newJob
+			slog.Error("Failed to create error log: ", "err", err)
 		}
 	}
-	s.JobScheduler.Stop()
-	s.JobScheduler.StartAsync()
-	return nil
-}
-
-func (s *syncerScheduler) UnregisterSyncer(scf SyncerConf) error {
-	err := s.JobScheduler.RemoveByID(s.SyncerJobs[scf.ID])
-	if err != nil {
-		return err
-	}
-	s.SyncerJobs[scf.ID] = nil
-	return nil
+	slog.Info(
+		fmt.Sprintf("syncer %s(%s), synced %d, elapsed %s",
+			syncer.GetConfig().ID, syncer.GetConfig().Service.Name, synched, time.Since(start).String()))
 }

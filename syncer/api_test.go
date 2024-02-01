@@ -30,7 +30,7 @@ func TestSyncerAPI(t *testing.T) {
 
 		c := api.Server.NewContext(req, rec)
 
-		mockRepo.On("Create", mock.AnythingOfType("SyncerConf")).Return(nil)
+		mockRepo.On("Create", mock.AnythingOfType("SyncerConf")).Return(mock.AnythingOfType("SyncerConf"), nil)
 		err = api.createSyncerConfHandler(c)
 
 		assert.NoError(t, err)
@@ -95,9 +95,9 @@ type MockSyncerConfRepository struct {
 	mock.Mock
 }
 
-func (m *MockSyncerConfRepository) Create(syncerConf SyncerConf) error {
+func (m *MockSyncerConfRepository) Create(syncerConf SyncerConf) (SyncerConf, error) {
 	args := m.Called(syncerConf)
-	return args.Error(0)
+	return args.Get(0).(SyncerConf), args.Error(1)
 }
 
 func (m *MockSyncerConfRepository) GetAll() ([]SyncerConf, error) {
@@ -144,3 +144,4 @@ func (ms *MockSyncerScheduler) RegisterSyncer(sc SyncerConf) error {
 func (ms *MockSyncerScheduler) UnregisterSyncer(sc SyncerConf) error {
 	return nil
 }
+func (ms *MockSyncerScheduler) Close() error { return nil }

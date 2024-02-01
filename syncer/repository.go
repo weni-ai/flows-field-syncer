@@ -11,7 +11,7 @@ import (
 )
 
 type SyncerConfRepository interface {
-	Create(syncerConf SyncerConf) error
+	Create(syncerConf SyncerConf) (SyncerConf, error)
 	GetByID(id string) (SyncerConf, error)
 	GetByOrgID(orgID string) ([]SyncerConf, error)
 	GetAll() ([]SyncerConf, error)
@@ -28,10 +28,10 @@ func NewSyncerConfRepository(db *mongo.Database) SyncerConfRepository {
 	return &syncerConfRepository{collection}
 }
 
-func (r *syncerConfRepository) Create(syncerConf SyncerConf) error {
+func (r *syncerConfRepository) Create(syncerConf SyncerConf) (SyncerConf, error) {
 	syncerConf.ID = primitive.NewObjectID().Hex()
 	_, err := r.collection.InsertOne(context.Background(), syncerConf)
-	return err
+	return syncerConf, err
 }
 
 func (r *syncerConfRepository) GetByID(id string) (SyncerConf, error) {

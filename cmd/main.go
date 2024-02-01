@@ -8,11 +8,13 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/bsm/redislock"
 	"github.com/getsentry/sentry-go"
 	slogsentry "github.com/ihippik/slog-sentry"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/pkg/errors"
+	"github.com/redis/go-redis/v9"
 	"github.weni-ai/flows-field-syncer/configs"
 	"github.weni-ai/flows-field-syncer/syncer"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -42,10 +44,19 @@ func main() {
 	syncerConfRepo := syncer.NewSyncerConfRepository(syncerdb)
 	syncerLogRepo := syncer.NewSyncerLogRepository(syncerdb)
 
+	redisopt, err := redis.ParseURL(config.RedisURL)
+	if err != nil {
+		log.Fatal(errors.Wrap(err, "failed to parse config.RedisURL"))
+	}
+	redisclient := redis.NewClient(redisopt)
+	locker := redislock.New(redisclient)
+
 	sc := syncer.NewSyncerSchedulerM(
 		syncerLogRepo,
 		syncerConfRepo,
 		flowsdb,
+		redisclient,
+		locker,
 	)
 
 	api := syncer.NewSyncerAPI(
@@ -74,6 +85,7 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt)
 	<-quit
+	sc.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := api.Server.Shutdown(ctx); err != nil {

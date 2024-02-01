@@ -3,8 +3,11 @@ package syncer
 import (
 	"context"
 	"fmt"
+	"log"
 	"log/slog"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -15,6 +18,8 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/pkg/errors"
 	"github.weni-ai/flows-field-syncer/configs"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 type SyncerAthena struct {
@@ -79,7 +84,7 @@ func (s *SyncerAthena) GenerateSelectToSyncQuery(offset, limit int) (string, err
 }
 
 func (s *SyncerAthena) MakeQuery(ctx context.Context, query string) ([]map[string]any, error) {
-	slog.Info(fmt.Sprintf("making query: %s, for %s with org ID %d", query, s.GetConfig().Service.Name, s.GetConfig().SyncRules.OrgID))
+	slog.Info(fmt.Sprintf("%s(%s) syncer making query: %s", s.GetConfig().ID, s.GetConfig().Service.Name, query))
 	queryInput := &athena.StartQueryExecutionInput{
 		QueryString: aws.String(query),
 		QueryExecutionContext: &athena.QueryExecutionContext{
@@ -142,36 +147,72 @@ func (s *SyncerAthena) MakeQuery(ctx context.Context, query string) ([]map[strin
 }
 
 func (s *SyncerAthena) SyncContactFields(db *sqlx.DB) (int, error) {
+	var startTime = time.Now()
 	var updated int
+	var updatedMutex sync.Mutex
 	conf := configs.GetConfig()
 	batchSize := conf.BatchSize
-	for offset := 0; ; offset += batchSize {
-		query, err := s.GenerateSelectToSyncQuery(offset, batchSize)
-		if err != nil {
-			return 0, errors.Wrap(err, "error generating query")
+	maxGoroutines := conf.MaxGoroutines
+	totalRows, err := s.GetTotalRows()
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to get total rows")
+	}
+
+	sem := semaphore.NewWeighted(int64(maxGoroutines))
+	var eg errgroup.Group
+	var count int
+	var countMutex sync.Mutex
+
+	for offset := 0; offset < totalRows; offset += batchSize {
+
+		currOffset := offset
+
+		if err := sem.Acquire(context.TODO(), 1); err != nil {
+			return 0, err
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*600)
-		defer cancel()
-		results, err := s.MakeQuery(ctx, query)
-		if err != nil {
-			return 0, errors.Wrap(err, "error executing query")
-		}
+		eg.Go(func() error {
+			defer sem.Release(1)
+			query, err := s.GenerateSelectToSyncQuery(currOffset, batchSize)
+			if err != nil {
+				return errors.Wrap(err, "error generating query")
+			}
 
-		// if no results stop perform sync
-		if len(results) == 0 {
-			break
-		}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*600)
+			defer cancel()
+			results, err := s.MakeQuery(ctx, query)
+			if err != nil {
+				return errors.Wrap(err, "error executing query")
+			}
 
-		updatedPerformed, err := performSync(s.GetConfig(), db, results)
-		updated += updatedPerformed
-		if err != nil {
-			return updated, nil
-		}
+			updatedPerformed, err := performSync(s.GetConfig(), db, results)
+			updatedMutex.Lock()
+			updated += updatedPerformed
+			updatedMutex.Unlock()
+			if err != nil {
+				return errors.Wrap(err, "error executing sync")
+			}
+
+			countMutex.Lock()
+			count += len(results)
+			countMutex.Unlock()
+
+			// Calculate percentage completion and elapsed time
+			percentage := float64(count) / float64(totalRows) * 100
+			elapsedTime := time.Since(startTime)
+			estimatedTimeRemaining := (elapsedTime / time.Duration(count)) * time.Duration(totalRows-count)
+
+			slog.Info(fmt.Sprintf("%s(%s) Progress: %.2f%%, Elapsed time: %s, Estimated remaining time: %s\n", s.Conf.ID, s.Conf.Service.Name, percentage, elapsedTime, estimatedTimeRemaining))
+			return nil
+		})
 
 		if batchSize == 0 {
 			break
 		}
+	}
+
+	if err := eg.Wait(); err != nil {
+		log.Fatal(err)
 	}
 
 	return updated, nil
@@ -182,3 +223,65 @@ func (s *SyncerAthena) Close() error {
 }
 
 func (s *SyncerAthena) GetConfig() SyncerConf { return s.Conf }
+
+func (s *SyncerAthena) GetTotalRows() (int, error) {
+	var totalRows int
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", s.Conf.Table.Name)
+
+	queryInput := &athena.StartQueryExecutionInput{
+		QueryString: aws.String(query),
+		QueryExecutionContext: &athena.QueryExecutionContext{
+			Database: aws.String(s.Database),
+		},
+		ResultConfiguration: &athena.ResultConfiguration{
+			OutputLocation: aws.String(s.ResultOutputLocation),
+		},
+		WorkGroup: aws.String(s.WorkGroupName),
+	}
+
+	startQueryOutput, err := s.Client.StartQueryExecution(queryInput)
+	if err != nil {
+		return 0, errors.Wrap(err, "Error starting query execution")
+	}
+
+	queryExecutionID := startQueryOutput.QueryExecutionId
+	for {
+		resultQueryExecution, err := s.Client.GetQueryExecution(&athena.GetQueryExecutionInput{QueryExecutionId: queryExecutionID})
+		if err != nil {
+			return 0, errors.Wrap(err, "Error getting query execution")
+		}
+
+		if resultQueryExecution.QueryExecution != nil {
+			if *resultQueryExecution.QueryExecution.Status.State == "SUCCEEDED" {
+				break
+			} else if *resultQueryExecution.QueryExecution.Status.State == "FAILED" {
+				return 0, errors.Wrap(err, "Query execution failed")
+			}
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	getQueryResultsOutput, err := s.Client.GetQueryResults(&athena.GetQueryResultsInput{
+		QueryExecutionId: queryExecutionID,
+	})
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to get query results")
+	}
+
+	for i, row := range getQueryResultsOutput.ResultSet.Rows {
+		if i == 0 {
+			continue
+		}
+		for _, col := range row.Data {
+			if col != nil && col.VarCharValue != nil {
+				value, err := strconv.Atoi(*col.VarCharValue)
+				if err != nil {
+					return 0, errors.Wrap(err, "failed to get total rows count")
+				}
+				totalRows = value
+			}
+		}
+	}
+
+	return totalRows, nil
+}

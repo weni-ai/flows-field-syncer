@@ -2,6 +2,7 @@ package syncer
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"testing"
 
@@ -138,3 +139,21 @@ func GetConf(confPath string) (*SyncerConf, error) {
 }
 
 func sp(s string) *string { return &s }
+
+func TestGetTotal(t *testing.T) {
+	conf, err := GetConf("./testdata/athena.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sc, err := NewSyncerAthena(*conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	total, err := sc.GetTotalRows()
+	if err != nil {
+		t.Fatal(err)
+	}
+	log.Println(total)
+}

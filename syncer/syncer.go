@@ -110,7 +110,6 @@ type SyncerLogCleaner interface {
 }
 
 func performSync(conf SyncerConf, db *sqlx.DB, results []map[string]any) (int, error) {
-	slog.Info(fmt.Sprintf("apply sync for %s with org ID %d", conf.Service.Name, conf.SyncRules.OrgID))
 	var updated int
 	// for each contact
 	for _, r := range results {

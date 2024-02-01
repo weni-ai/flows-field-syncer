@@ -3,6 +3,7 @@ package syncer
 import (
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -37,6 +38,7 @@ func (a *SyncerAPI) Start() {
 	go func() {
 		if err := a.Server.Start(a.Config.HostAPI + a.Config.PortAPI); err != nil && err != http.ErrServerClosed {
 			slog.Error("error on start api server", "err", err)
+			os.Exit(1)
 		}
 	}()
 }
@@ -54,15 +56,15 @@ func (a *SyncerAPI) createSyncerConfHandler(c echo.Context) error {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "sync rule for schedule time is invalid"})
 		}
 	}
-	err := a.SyncerConfRepo.Create(*syncerConf)
+	newConf, err := a.SyncerConfRepo.Create(*syncerConf)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
-	err = a.SyncerScheduler.RegisterSyncer(*syncerConf)
+	err = a.SyncerScheduler.RegisterSyncer(newConf)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
-	return c.JSON(http.StatusCreated, syncerConf)
+	return c.JSON(http.StatusCreated, newConf)
 }
 
 func (a *SyncerAPI) getSyncerConfHandler(c echo.Context) error {

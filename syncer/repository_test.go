@@ -25,7 +25,7 @@ func TestSyncerConfRepository(t *testing.T) {
 
 	t.Run("Create", func(t *testing.T) {
 		syncerConf := SyncerConf{ID: "1", Service: SyncerService{Name: "Test"}}
-		err := repo.Create(syncerConf)
+		_, err := repo.Create(syncerConf)
 		assert.NoError(t, err)
 	})
 
