@@ -178,8 +178,9 @@ func (s *syncerSchedulerM) syncerTask(syncer Syncer) {
 		slog.Error("Failed to create start info log: ", "err", err)
 	}
 
-	synched, err := syncer.SyncContactFields(s.flowsDB)
+	synched, err := SyncContactFields(s.flowsDB, syncer)
 	if err != nil {
+		slog.Info("Failed to sync")
 		slog.Error("Failed to sync contact fields", "err", err)
 		newLog := NewSyncerLog(
 			syncer.GetConfig().SyncRules.OrgID,

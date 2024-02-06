@@ -3,13 +3,18 @@ package syncer
 import (
 	"context"
 	"fmt"
+	"log"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/pkg/errors"
+	"github.weni-ai/flows-field-syncer/configs"
 	"github.weni-ai/flows-field-syncer/models"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 const (
@@ -29,12 +34,15 @@ const (
 )
 
 type Syncer interface {
-	GetLastModified() (time.Time, error)
-	SyncContactFields(*sqlx.DB) (int, error)
+	// SyncContactFields(*sqlx.DB) (int, error)
 	GenerateSelectToSyncQuery(int, int) (string, error)
 	MakeQuery(context.Context, string) ([]map[string]any, error)
 	Close() error
 	GetConfig() SyncerConf
+	GetTotalRows() (int, error)
+}
+
+type SyncerBase struct {
 }
 
 func NewSyncer(conf SyncerConf) (Syncer, error) {
@@ -109,7 +117,8 @@ func (c *SyncerConf) Validate() error {
 type SyncerLogCleaner interface {
 }
 
-func performSync(conf SyncerConf, db *sqlx.DB, results []map[string]any) (int, error) {
+func applySync(conf SyncerConf, db *sqlx.DB, results []map[string]any) (int, error) {
+	slog.Info(fmt.Sprintf("%s(%s) syncer apply sync on destination", conf.ID, conf.Service.Name))
 	var updated int
 	// for each contact
 	for _, r := range results {
@@ -184,5 +193,92 @@ func performSync(conf SyncerConf, db *sqlx.DB, results []map[string]any) (int, e
 		}
 		updated++
 	}
+	return updated, nil
+}
+
+func DoQuery(s Syncer, currOffset, batchSize int) ([]map[string]any, error) {
+	query, err := s.GenerateSelectToSyncQuery(currOffset, batchSize)
+	if err != nil {
+		slog.Error("error generating query", "err", err)
+		return nil, errors.Wrap(err, "error generating query")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*5)
+	defer cancel()
+	results, err := s.MakeQuery(ctx, query)
+	if err != nil {
+		slog.Error("error executing query", "err", err)
+		return nil, errors.Wrap(err, "error executing query")
+	}
+	return results, nil
+}
+
+func SyncContactFields(db *sqlx.DB, s Syncer) (int, error) {
+	var startTime = time.Now()
+	var updated int
+	var updatedMutex sync.Mutex
+	conf := configs.GetConfig()
+	batchSize := conf.BatchSize
+	maxGoroutines := conf.MaxGoroutines
+	totalRows, err := s.GetTotalRows()
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to get total rows")
+	}
+
+	sem := semaphore.NewWeighted(int64(maxGoroutines))
+	var eg errgroup.Group
+	var count int
+	var countMutex sync.Mutex
+
+	for offset := 0; offset < totalRows; offset += batchSize {
+
+		currOffset := offset
+
+		results, err := DoQuery(s, currOffset, batchSize)
+		if err != nil {
+			slog.Error("error querying results", "err", err)
+			return updated, err
+		}
+
+		if err := sem.Acquire(context.TODO(), 1); err != nil {
+			return 0, err
+		}
+
+		eg.Go(func() error {
+			defer sem.Release(1)
+
+			updatedPerformed, err := applySync(s.GetConfig(), db, results)
+			updatedMutex.Lock()
+			updated += updatedPerformed
+			updatedMutex.Unlock()
+			if err != nil {
+				slog.Error("error executing sync", "err", err)
+				return errors.Wrap(err, "error executing sync")
+			}
+
+			countMutex.Lock()
+			count += len(results)
+			percentage := float64(count) / float64(totalRows) * 100
+
+			// Calculate percentage completion and elapsed time
+			elapsedTime := time.Since(startTime)
+			estimatedTimeRemaining := (elapsedTime / time.Duration(count)) * time.Duration(totalRows-count)
+			slog.Info(fmt.Sprintf("%s(%s) Queried count: %d, Total Rows: %d", s.GetConfig().ID, s.GetConfig().Service.Name, count, totalRows))
+			slog.Info(fmt.Sprintf("%s(%s) Progress: %.2f%%, Elapsed time: %s, Estimated remaining time: %s\n", s.GetConfig().ID, s.GetConfig().Service.Name, percentage, elapsedTime, estimatedTimeRemaining))
+			countMutex.Unlock()
+
+			return nil
+		})
+
+		if batchSize == 0 {
+			break
+		}
+	}
+
+	if err := eg.Wait(); err != nil {
+		slog.Error("Error waiting for sync", "err", err)
+		log.Fatal(err)
+	}
+
 	return updated, nil
 }

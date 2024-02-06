@@ -42,7 +42,7 @@ func TestSyncerAthena(t *testing.T) {
 						{Name: sp("city")},
 						{Name: sp("mcc_code")},
 						{Name: sp("accreditation_status")},
-						{Name: sp("creeated_on")},
+						{Name: sp("created_on")},
 						{Name: sp("modified_on")},
 					},
 				},
@@ -56,7 +56,7 @@ func TestSyncerAthena(t *testing.T) {
 							{VarCharValue: aws.String("city")},
 							{VarCharValue: aws.String("mcc_code")},
 							{VarCharValue: aws.String("accreditation_status")},
-							{VarCharValue: aws.String("creeated_on")},
+							{VarCharValue: aws.String("created_on")},
 							{VarCharValue: aws.String("modified_on")},
 						},
 					},
@@ -94,7 +94,7 @@ func TestSyncerAthena(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	total, err := syncerAthena.SyncContactFields(db)
+	total, err := SyncContactFields(db, syncerAthena)
 	assert.Nil(t, err)
 	assert.Equal(t, 1, total)
 }

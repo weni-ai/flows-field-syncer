@@ -4,14 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"log/slog"
 	"strings"
-	"time"
 
 	"cloud.google.com/go/bigquery"
-	"github.com/jmoiron/sqlx"
 	"github.com/pkg/errors"
-	"github.weni-ai/flows-field-syncer/models"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
@@ -51,11 +47,6 @@ func NewSyncerBigQuery(conf SyncerConf) (*SyncerBigQuery, error) {
 		Client: client,
 		Conf:   conf,
 	}, nil
-}
-
-func (s *SyncerBigQuery) GetLastModified() (time.Time, error) {
-	log.Fatal("not implemented")
-	return time.Time{}, errors.New("not implemented")
 }
 
 func (s *SyncerBigQuery) GenerateSelectToSyncQuery(offset, limit int) (string, error) {
@@ -108,98 +99,12 @@ func (s *SyncerBigQuery) MakeQuery(ctx context.Context, query string) ([]map[str
 	return results, nil
 }
 
-func (s *SyncerBigQuery) SyncContactFields(db *sqlx.DB) (int, error) {
-	var updated int
-	// TODO offset and limit
-	query, err := s.GenerateSelectToSyncQuery(0, 0)
-	if err != nil {
-		return 0, errors.Wrap(err, "error generating query")
-	}
-
-	results, err := s.MakeQuery(context.TODO(), query)
-	if err != nil {
-		return 0, errors.Wrap(err, "error executing query")
-	}
-
-	for _, r := range results {
-		log.Println(r)
-		for _, v := range s.Conf.Table.Columns {
-			resultValue := r[v.Name]
-			found := true
-			// get contact field from flows
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			field, err := models.GetContactFieldByOrgAndKey(ctx, db, s.Conf.SyncRules.OrgID, v.FieldMapName)
-			if err != nil {
-				slog.Error(fmt.Sprintf("field could not be found in flows. field: %s", v.Name), "err", err)
-				found = false
-			}
-			if found {
-				// if field exists in flows, update that field in contact
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				relationColumn, ok := r[s.Conf.Table.RelationColumn]
-				if !ok {
-					errMsg := fmt.Sprintf("row is not containing the configure relation_column configured as: %s", s.Conf.Table.RelationColumn)
-					slog.Error(errMsg, "err", err)
-				} else {
-					switch s.Conf.Table.RelationType {
-					case RelationTypeContact:
-						err := models.UpdateContactField(ctx, db, relationColumn.(string), field.UUID, resultValue)
-						if err != nil {
-							errMsg := fmt.Sprintf("field could not be updated: %v", field)
-							slog.Error(errMsg, "err", err)
-						}
-					case RelationTypeURN:
-						err := models.UpdateContactFieldByURN(ctx, db, relationColumn.(string), s.Conf.SyncRules.OrgID, field.UUID, resultValue)
-						if err != nil {
-							errMsg := fmt.Sprintf("field could not be updated: %v", field)
-							slog.Error(errMsg, "err", err)
-						}
-					}
-				}
-			} else {
-				// if field not exist, create it and create it in contact field column jsonb
-				cf := models.NewContactField(
-					v.FieldMapName,
-					v.FieldMapName,
-					models.ScanValueType(resultValue),
-					s.Conf.SyncRules.OrgID,
-					s.Conf.SyncRules.AdminID,
-					s.Conf.SyncRules.AdminID)
-
-				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				defer cancel()
-				err := models.CreateContactField(ctx, db, cf)
-				if err != nil {
-					errMsg := fmt.Sprintf("error creating contact field: %v", v.FieldMapName)
-					slog.Error(errMsg, "err", err)
-				} else {
-					switch s.Conf.Table.RelationType {
-					case RelationTypeContact:
-						err := models.UpdateContactField(ctx, db, r[s.Conf.Table.RelationColumn].(string), cf.UUID, resultValue)
-						if err != nil {
-							errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
-							slog.Error(errMsg, "err", err)
-						}
-					case RelationTypeURN:
-						err := models.UpdateContactFieldByURN(ctx, db, r[s.Conf.Table.RelationColumn].(string), s.Conf.SyncRules.OrgID, cf.UUID, resultValue)
-						if err != nil {
-							errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
-							slog.Error(errMsg, "err", err)
-						}
-					}
-				}
-			}
-		}
-		updated++
-	}
-
-	return updated, nil
-}
-
 func (s *SyncerBigQuery) Close() error {
 	return s.Client.Close()
 }
 
 func (s *SyncerBigQuery) GetConfig() SyncerConf { return s.Conf }
+
+func (s *SyncerBigQuery) GetTotalRows() (int, error) {
+	return 0, nil
+}

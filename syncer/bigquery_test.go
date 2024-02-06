@@ -42,7 +42,7 @@ func TestSyncerBigquery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	total, err := syncerBigquery.SyncContactFields(db)
+	total, err := SyncContactFields(db, syncerBigquery)
 	assert.Nil(t, err)
 	assert.Equal(t, 1, total)
 }

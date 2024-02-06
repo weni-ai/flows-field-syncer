@@ -23,7 +23,7 @@ func TestSyncerPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	total, err := syncerPostgres.SyncContactFields(db)
+	total, err := SyncContactFields(db, syncerPostgres)
 	assert.Nil(t, err)
 	assert.Equal(t, 1, total)
 }

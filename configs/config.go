@@ -18,8 +18,8 @@ type Config struct {
 	SentryDSN              string `env:"SENTRY_DSN"`
 	LogLevel               string `env:"LOG_LEVEL,default=debug"`
 	AuthToken              string `env:"AUTH_TOKEN,default=''"`
-	BatchSize              int    `env:"BATCH_SIZE,default=3000"`
-	MaxGoroutines          int    `env:"MAX_GOROUTINES,default=6"`
+	BatchSize              int    `env:"BATCH_SIZE,default=10000"`
+	MaxGoroutines          int    `env:"MAX_GOROUTINES,default=3"`
 	RedisURL               string `env:"REDIS_URL,default=redis://localhost:6379/15"`
 }
 

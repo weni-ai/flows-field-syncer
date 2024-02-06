@@ -3,11 +3,9 @@ package syncer
 import (
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -15,11 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/athena"
 	"github.com/aws/aws-sdk-go/service/athena/athenaiface"
-	"github.com/jmoiron/sqlx"
 	"github.com/pkg/errors"
-	"github.weni-ai/flows-field-syncer/configs"
-	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 )
 
 type SyncerAthena struct {
@@ -59,10 +53,6 @@ func NewSyncerAthena(conf SyncerConf) (*SyncerAthena, error) {
 		WorkGroupName:        conf.Service.Access[CONF_WORKGROUP_NAME].(string),
 		Client:               client,
 	}, nil
-}
-
-func (s *SyncerAthena) GetLastModified() (time.Time, error) {
-	return time.Time{}, errors.New("not implemented yet")
 }
 
 func (s *SyncerAthena) GenerateSelectToSyncQuery(offset, limit int) (string, error) {
@@ -118,104 +108,36 @@ func (s *SyncerAthena) MakeQuery(ctx context.Context, query string) ([]map[strin
 		time.Sleep(1 * time.Second)
 	}
 
-	getQueryResultsOutput, err := s.Client.GetQueryResults(&athena.GetQueryResultsInput{
-		QueryExecutionId: queryExecutionID,
-	})
+	resultRows := []map[string]interface{}{}
+	currentPage := 0
+	err = s.Client.GetQueryResultsPages(
+		&athena.GetQueryResultsInput{QueryExecutionId: queryExecutionID},
+		func(page *athena.GetQueryResultsOutput, lastPage bool) bool {
+			{
+				for i, row := range page.ResultSet.Rows {
+					if currentPage == 0 && i == 0 {
+						continue
+					}
+
+					currentRow := make(map[string]interface{})
+
+					for j, data := range row.Data {
+						columnName := *page.ResultSet.ResultSetMetadata.ColumnInfo[j].Name
+						if data != nil && data.VarCharValue != nil {
+							currentRow[columnName] = *data.VarCharValue
+						}
+					}
+					resultRows = append(resultRows, currentRow)
+				}
+			}
+			currentPage++
+			return !lastPage
+		})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get query results")
 	}
 
-	resultRows := []map[string]interface{}{}
-
-	for i, row := range getQueryResultsOutput.ResultSet.Rows {
-		if i == 0 {
-			continue
-		}
-
-		currentRow := make(map[string]interface{})
-
-		for j, data := range row.Data {
-			columnName := *getQueryResultsOutput.ResultSet.ResultSetMetadata.ColumnInfo[j].Name
-			if data != nil && data.VarCharValue != nil {
-				currentRow[columnName] = *data.VarCharValue
-			}
-		}
-		resultRows = append(resultRows, currentRow)
-	}
-
 	return resultRows, nil
-}
-
-func (s *SyncerAthena) SyncContactFields(db *sqlx.DB) (int, error) {
-	var startTime = time.Now()
-	var updated int
-	var updatedMutex sync.Mutex
-	conf := configs.GetConfig()
-	batchSize := conf.BatchSize
-	maxGoroutines := conf.MaxGoroutines
-	totalRows, err := s.GetTotalRows()
-	if err != nil {
-		return 0, errors.Wrap(err, "failed to get total rows")
-	}
-
-	sem := semaphore.NewWeighted(int64(maxGoroutines))
-	var eg errgroup.Group
-	var count int
-	var countMutex sync.Mutex
-
-	for offset := 0; offset < totalRows; offset += batchSize {
-
-		currOffset := offset
-
-		if err := sem.Acquire(context.TODO(), 1); err != nil {
-			return 0, err
-		}
-
-		eg.Go(func() error {
-			defer sem.Release(1)
-			query, err := s.GenerateSelectToSyncQuery(currOffset, batchSize)
-			if err != nil {
-				return errors.Wrap(err, "error generating query")
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second*600)
-			defer cancel()
-			results, err := s.MakeQuery(ctx, query)
-			if err != nil {
-				return errors.Wrap(err, "error executing query")
-			}
-
-			updatedPerformed, err := performSync(s.GetConfig(), db, results)
-			updatedMutex.Lock()
-			updated += updatedPerformed
-			updatedMutex.Unlock()
-			if err != nil {
-				return errors.Wrap(err, "error executing sync")
-			}
-
-			countMutex.Lock()
-			count += len(results)
-			countMutex.Unlock()
-
-			// Calculate percentage completion and elapsed time
-			percentage := float64(count) / float64(totalRows) * 100
-			elapsedTime := time.Since(startTime)
-			estimatedTimeRemaining := (elapsedTime / time.Duration(count)) * time.Duration(totalRows-count)
-
-			slog.Info(fmt.Sprintf("%s(%s) Progress: %.2f%%, Elapsed time: %s, Estimated remaining time: %s\n", s.Conf.ID, s.Conf.Service.Name, percentage, elapsedTime, estimatedTimeRemaining))
-			return nil
-		})
-
-		if batchSize == 0 {
-			break
-		}
-	}
-
-	if err := eg.Wait(); err != nil {
-		log.Fatal(err)
-	}
-
-	return updated, nil
 }
 
 func (s *SyncerAthena) Close() error {
