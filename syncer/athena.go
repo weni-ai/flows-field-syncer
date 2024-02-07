@@ -102,7 +102,8 @@ func (s *SyncerAthena) MakeQuery(ctx context.Context, query string) ([]map[strin
 			if *resultQueryExecution.QueryExecution.Status.State == "SUCCEEDED" {
 				break
 			} else if *resultQueryExecution.QueryExecution.Status.State == "FAILED" {
-				return nil, errors.Wrap(err, "Query execution failed")
+				errMsg := *resultQueryExecution.QueryExecution.Status.AthenaError.ErrorMessage
+				return nil, errors.Errorf("Query execution failed: %s", errMsg)
 			}
 		}
 		time.Sleep(1 * time.Second)
