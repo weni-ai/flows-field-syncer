@@ -33,9 +33,13 @@ const (
 	LogTypeError = "error"
 )
 
+const (
+	StrategyTypePull       = "pull"
+	StrategyTypeContactURN = "contact_urn"
+)
+
 type Syncer interface {
-	// SyncContactFields(*sqlx.DB) (int, error)
-	GenerateSelectToSyncQuery(int, int) (string, error)
+	GenerateSelectToSyncQuery(int, int, []string) (string, error)
 	MakeQuery(context.Context, string) ([]map[string]any, error)
 	Close() error
 	GetConfig() SyncerConf
@@ -65,6 +69,8 @@ type SyncerConf struct {
 		Interval     int    `bson:"interval" json:"interval"`
 		OrgID        int64  `bson:"org_id" json:"org_id"`
 		AdminID      int64  `bson:"admin_id" json:"admin_id"`
+		Strategy     string `bson:"strategy" json:"strategy"`
+		Schema       string `bson:"schema" json:"schema"`
 	} `bson:"sync_rules" json:"sync_rules"`
 	Table    SyncerTable `bson:"table" json:"table"`
 	IsActive bool        `bson:"is_active" json:"is_active"`
@@ -196,8 +202,8 @@ func applySync(conf SyncerConf, db *sqlx.DB, results []map[string]any) (int, err
 	return updated, nil
 }
 
-func DoQuery(s Syncer, currOffset, batchSize int) ([]map[string]any, error) {
-	query, err := s.GenerateSelectToSyncQuery(currOffset, batchSize)
+func DoQuery(s Syncer, currOffset, batchSize int, conditionList []string) ([]map[string]any, error) {
+	query, err := s.GenerateSelectToSyncQuery(currOffset, batchSize, conditionList)
 	if err != nil {
 		slog.Error("error generating query", "err", err)
 		return nil, errors.Wrap(err, "error generating query")
@@ -234,7 +240,77 @@ func SyncContactFields(db *sqlx.DB, s Syncer) (int, error) {
 
 		currOffset := offset
 
-		results, err := DoQuery(s, currOffset, batchSize)
+		results, err := DoQuery(s, currOffset, batchSize, nil)
+		if err != nil {
+			slog.Error("error querying results", "err", err)
+			return updated, err
+		}
+
+		if err := sem.Acquire(context.TODO(), 1); err != nil {
+			return 0, err
+		}
+
+		eg.Go(func() error {
+			defer sem.Release(1)
+
+			updatedPerformed, err := applySync(s.GetConfig(), db, results)
+			updatedMutex.Lock()
+			updated += updatedPerformed
+			updatedMutex.Unlock()
+			if err != nil {
+				slog.Error("error executing sync", "err", err)
+				return errors.Wrap(err, "error executing sync")
+			}
+
+			countMutex.Lock()
+			count += len(results)
+			percentage := float64(count) / float64(totalRows) * 100
+
+			// Calculate percentage completion and elapsed time
+			elapsedTime := time.Since(startTime)
+			estimatedTimeRemaining := (elapsedTime / time.Duration(count)) * time.Duration(totalRows-count)
+			slog.Info(fmt.Sprintf("%s(%s) Queried count: %d, Total Rows: %d", s.GetConfig().ID, s.GetConfig().Service.Name, count, totalRows))
+			slog.Info(fmt.Sprintf("%s(%s) Progress: %.2f%%, Elapsed time: %s, Estimated remaining time: %s\n", s.GetConfig().ID, s.GetConfig().Service.Name, percentage, elapsedTime, estimatedTimeRemaining))
+			countMutex.Unlock()
+
+			return nil
+		})
+
+		if batchSize == 0 {
+			break
+		}
+	}
+
+	if err := eg.Wait(); err != nil {
+		slog.Error("Error waiting for sync", "err", err)
+		log.Fatal(err)
+	}
+
+	return updated, nil
+}
+
+func SyncContactFieldsStrategy2(ctx context.Context, db *sqlx.DB, s Syncer) (int, error) {
+	var startTime = time.Now()
+	var updated int
+	var updatedMutex sync.Mutex
+	conf := configs.GetConfig()
+	batchSize := conf.BatchSize
+	maxGoroutines := conf.MaxGoroutines
+	contacts, err := models.GetContactsURNPathByOrgID(ctx, db, s.GetConfig().SyncRules.OrgID, s.GetConfig().SyncRules.Schema)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to get contacts")
+	}
+	totalRows := len(contacts)
+
+	sem := semaphore.NewWeighted(int64(maxGoroutines))
+	var eg errgroup.Group
+	var count int
+	var countMutex sync.Mutex
+
+	for offset := 0; offset < totalRows; offset += batchSize {
+		contactsToQuery := contacts[offset:]
+
+		results, err := DoQuery(s, 0, 0, contactsToQuery)
 		if err != nil {
 			slog.Error("error querying results", "err", err)
 			return updated, err

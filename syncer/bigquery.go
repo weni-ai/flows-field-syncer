@@ -49,7 +49,7 @@ func NewSyncerBigQuery(conf SyncerConf) (*SyncerBigQuery, error) {
 	}, nil
 }
 
-func (s *SyncerBigQuery) GenerateSelectToSyncQuery(offset, limit int) (string, error) {
+func (s *SyncerBigQuery) BaseQuery() string {
 	var columns []string
 	table := s.Conf.Table
 
@@ -59,8 +59,26 @@ func (s *SyncerBigQuery) GenerateSelectToSyncQuery(offset, limit int) (string, e
 		columns = append(columns, column.Name)
 	}
 	columnList := strings.Join(columns, ", ")
+	bq := fmt.Sprintf("SELECT %s FROM %s ", columnList, table.Name)
+	return bq
+}
 
-	query := fmt.Sprintf("SELECT %s FROM %s", columnList, table.Name)
+func (s *SyncerBigQuery) GenerateSelectToSyncQuery(offset, limit int, conditionList []string) (string, error) {
+	baseQuery := s.BaseQuery()
+	var query string
+	switch s.Conf.SyncRules.Strategy {
+	case StrategyTypeContactURN:
+		for i, str := range conditionList {
+			conditionList[i] = "'" + str + "'"
+		}
+		query = fmt.Sprintf("%s WHERE %s in (%s)", baseQuery, s.Conf.Table.RelationColumn, strings.Join(conditionList, ", "))
+	case StrategyTypePull:
+	default:
+		query = fmt.Sprintf("%s OFFSET %d", baseQuery, offset)
+	}
+	if limit != 0 {
+		query = fmt.Sprintf("%s LIMIT %d", query, limit)
+	}
 	return query, nil
 }
 

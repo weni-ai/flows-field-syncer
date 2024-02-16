@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/pkg/errors"
 )
 
 type Contact struct {
@@ -70,4 +71,31 @@ func UpdateContactFieldByURN(ctx context.Context, db *sqlx.DB, pathURN string, o
 		orgID,
 	)
 	return err
+}
+
+func GetContactsURNPathByOrgID(ctx context.Context, db *sqlx.DB, orgID int64, scheme string) ([]string, error) {
+	selectContactsSQL := `
+	SELECT ccu.path
+	FROM public.contacts_contacturn AS ccu
+	JOIN public.contacts_contact AS cc ON ccu.contact_id = cc.id
+	WHERE cc.org_id = $1
+	AND cc.is_active = true
+	AND ccu.scheme = $2
+	`
+	rows, err := db.QueryContext(ctx, selectContactsSQL, orgID, scheme)
+	if err != nil {
+		return nil, errors.Wrap(err, "Error querying contacts")
+	}
+
+	contacts := make([]string, 0)
+	for rows.Next() {
+		var path string
+		err := rows.Scan(&path)
+		if err != nil {
+			return nil, err
+		}
+		contacts = append(contacts, path)
+	}
+	rows.Close()
+	return contacts, nil
 }
