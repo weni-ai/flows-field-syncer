@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -91,7 +92,14 @@ type SyncerTable struct {
 }
 
 type SyncerColumn struct {
-	Name         string `bson:"name" json:"name"`
+	Name         string        `bson:"name" json:"name"`
+	FieldMapName string        `bson:"field_map_name" json:"field_map_name"`
+	NestedFields []NestedField `bson:"nested_fields" json:"nested_fields"`
+	NestedType   string        `bson:"nested_type" json:"nested_type"`
+}
+
+type NestedField struct {
+	Attribute    string `bson:"attribute" json:"attribute"`
 	FieldMapName string `bson:"field_map_name" json:"field_map_name"`
 }
 
@@ -131,67 +139,155 @@ func applySync(conf SyncerConf, db *sqlx.DB, results []map[string]any) (int, err
 		// update fields
 		for _, v := range conf.Table.Columns {
 			resultValue := r[v.Name]
-			found := true
-			// get contact field from flows
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			field, err := models.GetContactFieldByOrgAndKey(ctx, db, conf.SyncRules.OrgID, v.FieldMapName)
-			if err != nil {
-				slog.Error(fmt.Sprintf("field could not be found in flows. field: %s", v.Name), "err", err)
-				found = false
-			}
-			if found {
-				// if field exists in flows, update that field in contact
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				switch conf.Table.RelationType {
-				case RelationTypeContact:
-					err := models.UpdateContactField(ctx, db, r[conf.Table.RelationColumn].(string), field.UUID, resultValue)
-					if err != nil {
-						errMsg := fmt.Sprintf("field could not be updated: %v", field)
-						slog.Error(errMsg, "err", err)
-						return updated, errors.Wrap(err, errMsg)
+			contact := r[conf.Table.RelationColumn].(string)
+			// if nestedfields
+			if len(v.NestedFields) > 0 {
+				nestedFields, ok := resultValue.(string)
+				if ok {
+					var fieldsMap map[string]string
+					switch v.NestedType {
+					case "json":
+					case "struct":
+						fieldsMap = StringStructToMap(nestedFields)
 					}
-				case RelationTypeURN:
-					err := models.UpdateContactFieldByURN(ctx, db, r[conf.Table.RelationColumn].(string), conf.SyncRules.OrgID, field.UUID, resultValue)
-					if err != nil {
-						errMsg := fmt.Sprintf("field could not be updated: %v", field)
-						slog.Error(errMsg, "err", err)
-						return updated, errors.Wrap(err, errMsg)
+					for _, nestedField := range v.NestedFields {
+						fieldValue := fieldsMap[nestedField.Attribute]
+						fieldKey := nestedField.FieldMapName
+
+						// get contact field from flows
+						found := true
+						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+						defer cancel()
+						field, err := models.GetContactFieldByOrgAndKey(ctx, db, conf.SyncRules.OrgID, fieldKey)
+						if err != nil {
+							slog.Error(fmt.Sprintf("field could not be found in flows. field: %s", v.Name), "err", err)
+							found = false
+						}
+						if found {
+							// if field exists in flows, update that field in contact
+							ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+							defer cancel()
+							switch conf.Table.RelationType {
+							case RelationTypeContact:
+								err := models.UpdateContactField(ctx, db, contact, field.UUID, fieldValue)
+								if err != nil {
+									errMsg := fmt.Sprintf("field could not be updated: %v", field)
+									slog.Error(errMsg, "err", err)
+									return updated, errors.Wrap(err, errMsg)
+								}
+							case RelationTypeURN:
+								err := models.UpdateContactFieldByURN(ctx, db, contact, conf.SyncRules.OrgID, field.UUID, fieldValue)
+								if err != nil {
+									errMsg := fmt.Sprintf("field could not be updated: %v", field)
+									slog.Error(errMsg, "err", err)
+									return updated, errors.Wrap(err, errMsg)
+								}
+							}
+						} else {
+							// if field not exist, create it and create it in contact field column jsonb
+							ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+							defer cancel()
+							cf := models.NewContactField(
+								nestedField.FieldMapName,
+								nestedField.FieldMapName,
+								models.ScanValueType(fieldValue),
+								conf.SyncRules.OrgID,
+								conf.SyncRules.AdminID,
+								conf.SyncRules.AdminID)
+
+							err := models.CreateContactField(ctx, db, cf)
+							if err != nil {
+								errMsg := fmt.Sprintf("error creating contact field: %v", nestedField.FieldMapName)
+								slog.Error(errMsg, "err", err)
+								return updated, errors.Wrap(err, errMsg)
+							} else {
+								switch conf.Table.RelationType {
+								case RelationTypeContact:
+									err := models.UpdateContactField(ctx, db, contact, cf.UUID, fieldValue)
+									if err != nil {
+										errMsg := fmt.Sprintf("error updating contact field: %v", nestedField.FieldMapName)
+										slog.Error(errMsg, "err", err)
+										return updated, errors.Wrap(err, errMsg)
+									}
+								case RelationTypeURN:
+									err := models.UpdateContactFieldByURN(ctx, db, contact, conf.SyncRules.OrgID, cf.UUID, fieldValue)
+									if err != nil {
+										errMsg := fmt.Sprintf("error updating contact field: %v", nestedField.FieldMapName)
+										slog.Error(errMsg, "err", err)
+										return updated, errors.Wrap(err, errMsg)
+									}
+								}
+							}
+						}
+
 					}
 				}
-			} else {
-				// if field not exist, create it and create it in contact field column jsonb
-				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				defer cancel()
-				cf := models.NewContactField(
-					v.FieldMapName,
-					v.FieldMapName,
-					models.ScanValueType(resultValue),
-					conf.SyncRules.OrgID,
-					conf.SyncRules.AdminID,
-					conf.SyncRules.AdminID)
 
-				err := models.CreateContactField(ctx, db, cf)
+				// if mapping is not for jsonb or struct field
+			} else {
+				// get contact field from flows
+				found := true
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				field, err := models.GetContactFieldByOrgAndKey(ctx, db, conf.SyncRules.OrgID, v.FieldMapName)
 				if err != nil {
-					errMsg := fmt.Sprintf("error creating contact field: %v", v.FieldMapName)
-					slog.Error(errMsg, "err", err)
-					return updated, errors.Wrap(err, errMsg)
-				} else {
+					slog.Error(fmt.Sprintf("field could not be found in flows. field: %s", v.Name), "err", err)
+					found = false
+				}
+
+				if found {
+					// if field exists in flows, update that field in contact
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
 					switch conf.Table.RelationType {
 					case RelationTypeContact:
-						err := models.UpdateContactField(ctx, db, r[conf.Table.RelationColumn].(string), cf.UUID, resultValue)
+						err := models.UpdateContactField(ctx, db, contact, field.UUID, resultValue)
 						if err != nil {
-							errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
+							errMsg := fmt.Sprintf("field could not be updated: %v", field)
 							slog.Error(errMsg, "err", err)
 							return updated, errors.Wrap(err, errMsg)
 						}
 					case RelationTypeURN:
-						err := models.UpdateContactFieldByURN(ctx, db, r[conf.Table.RelationColumn].(string), conf.SyncRules.OrgID, cf.UUID, resultValue)
+						err := models.UpdateContactFieldByURN(ctx, db, contact, conf.SyncRules.OrgID, field.UUID, resultValue)
 						if err != nil {
-							errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
+							errMsg := fmt.Sprintf("field could not be updated: %v", field)
 							slog.Error(errMsg, "err", err)
 							return updated, errors.Wrap(err, errMsg)
+						}
+					}
+				} else {
+					// if field not exist, create it and create it in contact field column jsonb
+					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					defer cancel()
+					cf := models.NewContactField(
+						v.FieldMapName,
+						v.FieldMapName,
+						models.ScanValueType(resultValue),
+						conf.SyncRules.OrgID,
+						conf.SyncRules.AdminID,
+						conf.SyncRules.AdminID)
+
+					err := models.CreateContactField(ctx, db, cf)
+					if err != nil {
+						errMsg := fmt.Sprintf("error creating contact field: %v", v.FieldMapName)
+						slog.Error(errMsg, "err", err)
+						return updated, errors.Wrap(err, errMsg)
+					} else {
+						switch conf.Table.RelationType {
+						case RelationTypeContact:
+							err := models.UpdateContactField(ctx, db, contact, cf.UUID, resultValue)
+							if err != nil {
+								errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
+								slog.Error(errMsg, "err", err)
+								return updated, errors.Wrap(err, errMsg)
+							}
+						case RelationTypeURN:
+							err := models.UpdateContactFieldByURN(ctx, db, contact, conf.SyncRules.OrgID, cf.UUID, resultValue)
+							if err != nil {
+								errMsg := fmt.Sprintf("error updating contact field: %v", v.FieldMapName)
+								slog.Error(errMsg, "err", err)
+								return updated, errors.Wrap(err, errMsg)
+							}
 						}
 					}
 				}
@@ -357,4 +453,24 @@ func SyncContactFieldsStrategy2(ctx context.Context, db *sqlx.DB, s Syncer) (int
 	}
 
 	return updated, nil
+}
+
+func StringStructToMap(st string) map[string]string {
+	str := strings.TrimPrefix(st, "{")
+	str = strings.TrimPrefix(str, "}")
+
+	pairs := strings.Split(str, ", ")
+
+	data := make(map[string]string)
+
+	for _, pair := range pairs {
+		keyValue := strings.Split(pair, "=")
+		if len(keyValue) == 2 {
+			key := keyValue[0]
+			value := keyValue[1]
+			data[key] = value
+		}
+	}
+
+	return data
 }
