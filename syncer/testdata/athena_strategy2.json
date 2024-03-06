@@ -12,7 +12,7 @@
     }
   },
   "sync_rules": {
-    "time": "",
+    "schedule_times": [],
     "interval": 5,
     "org_id": 1,
     "admin_id": 1,

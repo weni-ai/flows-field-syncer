@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -47,9 +48,6 @@ type Syncer interface {
 	GetTotalRows() (int, error)
 }
 
-type SyncerBase struct {
-}
-
 func NewSyncer(conf SyncerConf) (Syncer, error) {
 	switch conf.Service.Type {
 	case TypePostgres:
@@ -66,12 +64,12 @@ type SyncerConf struct {
 	ID        string        `bson:"_id" json:"id,omitempty"`
 	Service   SyncerService `bson:"service" json:"service"`
 	SyncRules struct {
-		ScheduleTime string `bson:"schedule_time" json:"schedule_time"`
-		Interval     int    `bson:"interval" json:"interval"`
-		OrgID        int64  `bson:"org_id" json:"org_id"`
-		AdminID      int64  `bson:"admin_id" json:"admin_id"`
-		Strategy     string `bson:"strategy" json:"strategy"`
-		Schema       string `bson:"schema" json:"schema"`
+		ScheduleTimes []string `bson:"schedule_times" json:"schedule_times"`
+		Interval      int      `bson:"interval" json:"interval"`
+		OrgID         int64    `bson:"org_id" json:"org_id"`
+		AdminID       int64    `bson:"admin_id" json:"admin_id"`
+		Strategy      string   `bson:"strategy" json:"strategy"`
+		Schema        string   `bson:"schema" json:"schema"`
 	} `bson:"sync_rules" json:"sync_rules"`
 	Table    SyncerTable `bson:"table" json:"table"`
 	IsActive bool        `bson:"is_active" json:"is_active"`
@@ -360,12 +358,12 @@ func SyncContactFields(db *sqlx.DB, s Syncer) (int, error) {
 
 			countMutex.Lock()
 			count += len(results)
-			percentage := float64(count) / float64(totalRows) * 100
+			percentage := math.Max(float64(count)/float64(totalRows)*100, 100)
 
 			// Calculate percentage completion and elapsed time
 			elapsedTime := time.Since(startTime)
-			estimatedTimeRemaining := (elapsedTime / time.Duration(count)) * time.Duration(totalRows-count)
-			slog.Info(fmt.Sprintf("%s(%s) Queried count: %d, Total Rows: %d", s.GetConfig().ID, s.GetConfig().Service.Name, count, totalRows))
+			estimatedTimeRemaining := minDuration((elapsedTime/time.Duration(count))*time.Duration(totalRows-count), 0)
+			slog.Info(fmt.Sprintf("%s(%s) Queried Count Result: %d, Total Rows To Sync: %d", s.GetConfig().ID, s.GetConfig().Service.Name, count, totalRows))
 			slog.Info(fmt.Sprintf("%s(%s) Progress: %.2f%%, Elapsed time: %s, Estimated remaining time: %s\n", s.GetConfig().ID, s.GetConfig().Service.Name, percentage, elapsedTime, estimatedTimeRemaining))
 			countMutex.Unlock()
 
@@ -430,12 +428,12 @@ func SyncContactFieldsStrategy2(ctx context.Context, db *sqlx.DB, s Syncer) (int
 
 			countMutex.Lock()
 			count += len(results)
-			percentage := float64(count) / float64(totalRows) * 100
+			percentage := math.Max(float64(count)/float64(totalRows)*100, 100)
 
 			// Calculate percentage completion and elapsed time
 			elapsedTime := time.Since(startTime)
-			estimatedTimeRemaining := (elapsedTime / time.Duration(count)) * time.Duration(totalRows-count)
-			slog.Info(fmt.Sprintf("%s(%s) Queried count: %d, Total Rows: %d", s.GetConfig().ID, s.GetConfig().Service.Name, count, totalRows))
+			estimatedTimeRemaining := minDuration((elapsedTime/time.Duration(count))*time.Duration(totalRows-count), 0)
+			slog.Info(fmt.Sprintf("%s(%s) Queried Count Result: %d, Total Rows To Sync: %d", s.GetConfig().ID, s.GetConfig().Service.Name, count, totalRows))
 			slog.Info(fmt.Sprintf("%s(%s) Progress: %.2f%%, Elapsed time: %s, Estimated remaining time: %s\n", s.GetConfig().ID, s.GetConfig().Service.Name, percentage, elapsedTime, estimatedTimeRemaining))
 			countMutex.Unlock()
 
@@ -473,4 +471,11 @@ func StringStructToMap(st string) map[string]string {
 	}
 
 	return data
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a <= b {
+		return a
+	}
+	return b
 }

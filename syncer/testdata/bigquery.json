@@ -8,7 +8,7 @@
     }
   },
   "sync_rules": {
-    "time": "00:00",
+    "schedule_times": ["00:00"],
     "interval": 60,
     "org_id": 1,
     "admin_id": 1

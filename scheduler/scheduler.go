@@ -85,14 +85,14 @@ func (s *Scheduler) checkAndExecute() {
 	defer s.mu.Unlock()
 
 	currentTime := time.Now().Format("15:04")
-	currentDate := time.Now().Format("2006-01-02")
+	currentDate := time.Now().Format("2006-01-02T15:04")
 
 	for _, task := range s.tasks {
 		for _, value := range task.ScheduleTime {
 			if value == ScheduleTime(currentTime) {
 				task.mu.Lock()
 				lastExecuted, ok := task.LastExec[value]
-				if !ok || lastExecuted.Format("2006-01-02") != currentDate {
+				if !ok || lastExecuted.Format("2006-01-02T15:04") != currentDate {
 					task.LastExec[value] = time.Now()
 					go task.Execution()
 				}

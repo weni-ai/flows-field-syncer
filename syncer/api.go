@@ -1,6 +1,7 @@
 package syncer
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -48,12 +49,14 @@ func (a *SyncerAPI) createSyncerConfHandler(c echo.Context) error {
 	if err := c.Bind(syncerConf); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
-	if syncerConf.SyncRules.ScheduleTime == "" {
-		syncerConf.SyncRules.ScheduleTime = time.Now().Format("15:04")
+	if len(syncerConf.SyncRules.ScheduleTimes) <= 0 {
+		syncerConf.SyncRules.ScheduleTimes = []string{time.Now().Format("15:04")}
 	} else {
-		_, err := time.Parse("15:04", syncerConf.SyncRules.ScheduleTime)
-		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "sync rule for schedule time is invalid"})
+		for i, st := range syncerConf.SyncRules.ScheduleTimes {
+			_, err := time.Parse("15:04", st)
+			if err != nil {
+				return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("sync rule for schedule time is invalid for element %d: %v", i, st)})
+			}
 		}
 	}
 	newConf, err := a.SyncerConfRepo.Create(*syncerConf)

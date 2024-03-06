@@ -13,6 +13,8 @@ import (
 	"github.weni-ai/flows-field-syncer/scheduler"
 )
 
+const minIntervalLock = time.Hour * 1
+
 type syncerSchedulerM struct {
 	logRepo  SyncerLogRepository
 	confRepo SyncerConfRepository
@@ -49,7 +51,7 @@ func (s *syncerSchedulerM) StartLogCleaner() error {
 		},
 		func() {
 			ctx := context.Background()
-			lock, err := s.locker.Obtain(ctx, taskKey, time.Hour, nil)
+			lock, err := s.locker.Obtain(ctx, taskKey, minIntervalLock, nil)
 			if err == redislock.ErrNotObtained {
 				slog.Info(fmt.Sprintf("%s task still in progress", taskKey))
 				return
@@ -93,13 +95,14 @@ func (s *syncerSchedulerM) LoadSyncers() error {
 
 func (s *syncerSchedulerM) StartSyncers() error {
 	for _, sc := range s.Syncers {
+		scheduleTimes := []scheduler.ScheduleTime{}
+		for _, st := range sc.GetConfig().SyncRules.ScheduleTimes {
+			scheduleTimes = append(scheduleTimes, scheduler.ScheduleTime(st))
+		}
+
 		s.TaskScheduler.AddTask(
 			sc.GetConfig().ID,
-			[]scheduler.ScheduleTime{
-				scheduler.ScheduleTime(
-					sc.GetConfig().SyncRules.ScheduleTime,
-				),
-			},
+			scheduleTimes,
 			func() {
 				s.syncerTask(sc)
 			},
@@ -116,13 +119,14 @@ func (s *syncerSchedulerM) RegisterSyncer(scf SyncerConf) error {
 		return err
 	}
 
+	scheduleTimes := []scheduler.ScheduleTime{}
+	for _, st := range newSyncer.GetConfig().SyncRules.ScheduleTimes {
+		scheduleTimes = append(scheduleTimes, scheduler.ScheduleTime(st))
+	}
+
 	s.TaskScheduler.AddTask(
 		newSyncer.GetConfig().ID,
-		[]scheduler.ScheduleTime{
-			scheduler.ScheduleTime(
-				newSyncer.GetConfig().SyncRules.ScheduleTime,
-			),
-		},
+		scheduleTimes,
 		func() {
 			s.syncerTask(newSyncer)
 		},
@@ -153,7 +157,7 @@ func (s *syncerSchedulerM) Close() error {
 func (s *syncerSchedulerM) syncerTask(syncer Syncer) {
 	ctx := context.Background()
 	taskKey := syncer.GetConfig().ID
-	lock, err := s.locker.Obtain(ctx, taskKey, time.Hour*2, nil)
+	lock, err := s.locker.Obtain(ctx, taskKey, minIntervalLock, nil)
 	if err == redislock.ErrNotObtained {
 		slog.Info(fmt.Sprintf("%s sync still in progress", taskKey))
 		return

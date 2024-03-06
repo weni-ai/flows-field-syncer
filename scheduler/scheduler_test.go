@@ -19,7 +19,7 @@ func incrementCounter() {
 	ct.value++
 }
 
-func TestScheduler(t *testing.T) {
+func TestSchedulerAddAndRemove(t *testing.T) {
 
 	ct = &counter{value: 0}
 
@@ -49,4 +49,27 @@ func TestScheduler(t *testing.T) {
 	assert.Equal(t, 2, len(s.tasks))
 
 	s.Stop()
+}
+
+func TestSchedulerCheckAndExecute(t *testing.T) {
+	ct = &counter{value: 0}
+	s := NewScheduler()
+
+	st1 := time.Now().Format("15:04")
+	st2 := time.Now().Add(time.Second * 60).Format("15:04")
+
+	increments := func() {
+		ct.value++
+		log.Println("counter incremented")
+	}
+
+	s.AddTask("key1", []ScheduleTime{ScheduleTime(st1), ScheduleTime(st2)}, increments)
+
+	s.checkAndExecute()
+	s.checkAndExecute()
+	time.Sleep(time.Second * 61)
+	s.checkAndExecute()
+	time.Sleep(time.Second * 1)
+
+	assert.Equal(t, 2, ct.value)
 }
